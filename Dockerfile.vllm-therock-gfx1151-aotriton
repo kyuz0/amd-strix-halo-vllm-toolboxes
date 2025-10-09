@@ -5,39 +5,75 @@ RUN git clone --depth 1 https://github.com/vllm-project/vllm.git
 
 # Install vLLM build dependencies and build vLLM
 RUN source .venv/bin/activate && \
-    cd vllm && \
-    uv pip install ninja cmake wheel pybind11 && \
-    uv pip install --upgrade numba scipy huggingface-hub[cli] "numpy<2" && \
-    python use_existing_torch.py && \
-    sed -i '/amdsmi==/d' requirements/rocm-build.txt && \
-    sed -i '/pytorch-triton-rocm/d' requirements/rocm-build.txt && \
-    sed -i '/triton==/d' requirements/rocm-build.txt && \
-    uv pip install -r requirements/rocm-build.txt
+  cd vllm && \
+  uv pip install --no-deps ninja cmake wheel pybind11 && \
+  uv pip install --no-deps --upgrade numba scipy huggingface-hub[cli] "numpy<2" && \
+  python use_existing_torch.py && \
+  sed -i '/amdsmi==/d' requirements/rocm-build.txt && \
+  sed -i '/pytorch-triton-rocm/d' requirements/rocm-build.txt && \
+  sed -i '/triton==/d' requirements/rocm-build.txt && \
+  uv pip install --no-deps -r requirements/rocm-build.txt
+
+
+ARG TORCH_WHEEL=""
+
+RUN set -euo pipefail; \
+  echo ">>> Locating PyTorch ROCm wheel..."; \
+  if [ -n "${TORCH_WHEEL}" ]; then \
+  # Allow globs in build arg \
+  # shellcheck disable=SC2086 \
+  WHEEL=$(echo ${TORCH_WHEEL}); \
+  else \
+  pick_newest() { \
+  find "$1" -type f -name 'torch*rocm*.whl' -printf '%T@ %p\n' 2>/dev/null \
+  | sort -nr | awk 'NR==1{print $2}'; \
+  }; \
+  WHEEL=""; \
+  for P in \
+  /root/tmp/pyout \
+  /torch-therock/TheRock/external-builds/pytorch/pytorch/dist \
+  /workspace/dist \
+  /tmp \
+  ; do \
+  CAND=$(pick_newest "$P" || true); \
+  if [ -n "${CAND:-}" ]; then WHEEL="$CAND"; break; fi; \
+  done; \
+  fi; \
+  if [ -z "${WHEEL:-}" ]; then \
+  echo "ERROR: No torch*rocm*.whl found and no TORCH_WHEEL provided." >&2; exit 1; \
+  fi; \
+  echo ">>> Installing: ${WHEEL}"; \
+  # Always install the torch wheel without dependencies to avoid resolving ROCm pins \
+  if ! ./.venv/bin/uv pip install --force-reinstall --no-deps "${WHEEL}"; then \
+  echo "ERROR: Failed to install PyTorch wheel with --no-deps" >&2; exit 1; \
+  fi; \
+  echo ">>> PyTorch wheel installation completed."
+
 
 # Apply gfx1151 fixes
 RUN cd vllm && \
-    sed -i 's/gfx1200;gfx1201/gfx1151;gfx1200;gfx1201/' CMakeLists.txt && \
-    sed -i '/torch == 2.8.0,/d' pyproject.toml && \
-    sed -i 's/import torch/try:\n    import torch\n    from torch.utils.cpp_extension import CUDA_HOME, ROCM_HOME\n    TORCH_AVAILABLE = True\nexcept ImportError:\n    torch = None\n    CUDA_HOME = None\n    ROCM_HOME = None\n    TORCH_AVAILABLE = False/' setup.py && \
-    sed -i 's/from torch.utils.cpp_extension import CUDA_HOME, ROCM_HOME/# Moved to try block above/' setup.py && \
-    sed -i 's/torch.version.cuda is None/TORCH_AVAILABLE and torch.version.cuda is None/' setup.py && \
-    sed -i 's/has_cuda = torch.version.cuda is not None/has_cuda = TORCH_AVAILABLE and torch.version.cuda is not None/' setup.py && \
-    sed -i 's/torch.version.hip is not None/TORCH_AVAILABLE and torch.version.hip is not None/' setup.py && \
-    sed -i 's/rocm_version = get_rocm_version() or torch.version.hip/rocm_version = get_rocm_version() or (torch.version.hip if TORCH_AVAILABLE else None)/' setup.py && \
-    sed -i 's/cuda_major, cuda_minor = torch.version.cuda.split(".")/cuda_major, cuda_minor = torch.version.cuda.split(".") if TORCH_AVAILABLE else ("0", "0")/' setup.py
+  sed -i 's/gfx1200;gfx1201/gfx1151;gfx1200;gfx1201/' CMakeLists.txt && \
+  sed -i '/torch == 2.8.0,/d' pyproject.toml && \
+  sed -i 's/import torch/try:\n    import torch\n    from torch.utils.cpp_extension import CUDA_HOME, ROCM_HOME\n    TORCH_AVAILABLE = True\nexcept ImportError:\n    torch = None\n    CUDA_HOME = None\n    ROCM_HOME = None\n    TORCH_AVAILABLE = False/' setup.py && \
+  sed -i 's/from torch.utils.cpp_extension import CUDA_HOME, ROCM_HOME/# Moved to try block above/' setup.py && \
+  sed -i 's/torch.version.cuda is None/TORCH_AVAILABLE and torch.version.cuda is None/' setup.py && \
+  sed -i 's/has_cuda = torch.version.cuda is not None/has_cuda = TORCH_AVAILABLE and torch.version.cuda is not None/' setup.py && \
+  sed -i 's/torch.version.hip is not None/TORCH_AVAILABLE and torch.version.hip is not None/' setup.py && \
+  sed -i 's/rocm_version = get_rocm_version() or torch.version.hip/rocm_version = get_rocm_version() or (torch.version.hip if TORCH_AVAILABLE else None)/' setup.py && \
+  sed -i 's/cuda_major, cuda_minor = torch.version.cuda.split(".")/cuda_major, cuda_minor = torch.version.cuda.split(".") if TORCH_AVAILABLE else ("0", "0")/' setup.py
 
 # Fix ROCm platform detection
 RUN cd vllm && \
-    git checkout HEAD -- vllm/platforms/__init__.py && \
-    sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/is_rocm = False/is_rocm = False/' vllm/platforms/__init__.py && \
-    sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/logger.debug("Checking if ROCm platform is available.")/logger.debug("Checking if ROCm platform is available.")\n    \n    # Skip amdsmi check due to segfault issues - default to ROCm for AMD systems/' vllm/platforms/__init__.py && \
-    sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/try:\n        import amdsmi/try:\n        import torch/' vllm/platforms/__init__.py && \
-    sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/amdsmi.amdsmi_init()/# amdsmi disabled - using torch detection/' vllm/platforms/__init__.py && \
-    sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/try:\n            if len(amdsmi.amdsmi_get_processor_handles()) > 0:/if hasattr(torch, '\''version'\'') and hasattr(torch.version, '\''hip'\'') and torch.version.hip is not None:/' vllm/platforms/__init__.py && \
-    sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/is_rocm = True\n                logger.debug("Confirmed ROCm platform is available.")/is_rocm = True\n            logger.debug("ROCm platform detected via torch.version.hip")/' vllm/platforms/__init__.py && \
-    sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/else:\n                logger.debug("ROCm platform is not available because"\n                             " no GPU is found.")/else:\n            # Fallback: assume ROCm if we'\''re not CUDA and not other platforms\n            logger.debug("Defaulting to ROCm platform (amdsmi disabled due to segfault)")\n            is_rocm = True/' vllm/platforms/__init__.py && \
-    sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/finally:\n            amdsmi.amdsmi_shut_down()/finally:\n            # amdsmi disabled\n            pass/' vllm/platforms/__init__.py && \
-    sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/logger.debug("ROCm platform is not available because: %s", str(e))/logger.debug("ROCm platform check failed: %s", str(e))\n        # Still default to ROCm as fallback\n        is_rocm = True/' vllm/platforms/__init__.py
+  git checkout HEAD -- vllm/platforms/__init__.py && \
+  sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/is_rocm = False/is_rocm = False/' vllm/platforms/__init__.py && \
+  sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/logger.debug("Checking if ROCm platform is available.")/logger.debug("Checking if ROCm platform is available.")\n    \n    # Skip amdsmi check due to segfault issues - default to ROCm for AMD systems/' vllm/platforms/__init__.py && \
+  sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/try:\n        import amdsmi/try:\n        import torch/' vllm/platforms/__init__.py && \
+  sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/amdsmi.amdsmi_init()/# amdsmi disabled - using torch detection/' vllm/platforms/__init__.py && \
+  sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/try:\n            if len(amdsmi.amdsmi_get_processor_handles()) > 0:/if hasattr(torch, '\''version'\'') and hasattr(torch.version, '\''hip'\'') and torch.version.hip is not None:/' vllm/platforms/__init__.py && \
+  sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/is_rocm = True\n                logger.debug("Confirmed ROCm platform is available.")/is_rocm = True\n            logger.debug("ROCm platform detected via torch.version.hip")/' vllm/platforms/__init__.py && \
+  sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/else:\n                logger.debug("ROCm platform is not available because"\n                             " no GPU is found.")/else:\n            # Fallback: assume ROCm if we'\''re not CUDA and not other platforms\n            logger.debug("Defaulting to ROCm platform (amdsmi disabled due to segfault)")\n            is_rocm = True/' vllm/platforms/__init__.py && \
+  sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/finally:\n            amdsmi.amdsmi_shut_down()/finally:\n            # amdsmi disabled\n            pass/' vllm/platforms/__init__.py && \
+  sed -i '/def rocm_platform_plugin/,/return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None/s/logger.debug("ROCm platform is not available because: %s", str(e))/logger.debug("ROCm platform check failed: %s", str(e))\n        # Still default to ROCm as fallback\n        is_rocm = True/' vllm/platforms/__init__.py
 
 # Also patch vllm/platforms/rocm.py to avoid amdsmi at runtime
 RUN cd vllm && python - <<'PY'
@@ -83,33 +119,64 @@ PY
 
 # Build vLLM
 RUN source .venv/bin/activate && \
-    cd vllm && \
-    uv pip uninstall amdsmi || echo "amdsmi not installed" && \
-    printf '#!/bin/bash\necho "gfx1151"\n' > /usr/local/bin/amdgpu-arch && \
-    chmod +x /usr/local/bin/amdgpu-arch && \
-    printf '#!/bin/bash\necho "gfx1151"\n' > /usr/bin/amdgpu-arch && \
-    chmod +x /usr/bin/amdgpu-arch && \
-    printf '#!/bin/bash\necho "gfx1151"\n' > /bin/amdgpu-arch && \
-    chmod +x /bin/amdgpu-arch && \
-    export PYTORCH_ROCM_ARCH="gfx1151" && \
-    /torch-therock/.venv/bin/python -c "import torch; print('torch==' + torch.__version__)" > /tmp/constraints.txt && \
-    /torch-therock/.venv/bin/python -c "import triton; print('pytorch-triton-rocm==' + getattr(triton, '__version__', 'unknown'))" >> /tmp/constraints.txt || echo "# triton version not found" >> /tmp/constraints.txt && \
-    TORCH_CMAKE_PATH=$(/torch-therock/.venv/bin/python -c "import torch; print(torch.utils.cmake_prefix_path)") && \
-    VLLM_TARGET_DEVICE=rocm CMAKE_PREFIX_PATH="$TORCH_CMAKE_PATH" Torch_DIR="$TORCH_CMAKE_PATH/Torch" CMAKE_ARGS="-DGPU_TARGETS=gfx1151 -DHIP_TARGETS=gfx1151 -DAMDGPU_TARGETS=gfx1151" /torch-therock/.venv/bin/pip install . --no-build-isolation --constraint /tmp/constraints.txt
+  cd vllm && \
+  uv pip uninstall amdsmi || echo "amdsmi not installed" && \
+  # stub amdgpu-arch so anything that calls it sees gfx1151
+  printf '#!/bin/bash\necho "gfx1151"\n' | tee /usr/local/bin/amdgpu-arch /usr/bin/amdgpu-arch /bin/amdgpu-arch >/dev/null && \
+  chmod +x /usr/local/bin/amdgpu-arch /usr/bin/amdgpu-arch /bin/amdgpu-arch && \
+  # also override the ROCm SDK bundled amdgpu-arch if present
+  SDK_AMDGPU_ARCH_PATH="$(/torch-therock/.venv/bin/python -c "import importlib.util as u, pathlib;\
+  spec = u.find_spec('_rocm_sdk_devel');\
+  print((pathlib.Path(spec.origin).parent/'lib'/'llvm'/'bin'/'amdgpu-arch').as_posix()) if spec and spec.origin else ''" 2>/dev/null || true)" && \
+  if [ -n "${SDK_AMDGPU_ARCH_PATH}" ] && [ -f "${SDK_AMDGPU_ARCH_PATH}" ]; then \
+  printf '#!/bin/bash\necho "gfx1151"\n' > "${SDK_AMDGPU_ARCH_PATH}" && \
+  chmod +x "${SDK_AMDGPU_ARCH_PATH}" || true; \
+  fi && \
+  export PYTORCH_ROCM_ARCH="gfx1151" && \
+  export SETUPTOOLS_SCM_PRETEND_VERSION=0.6.3 && \
+  export GPU_TARGETS="gfx1151" HIP_TARGETS="gfx1151" AMDGPU_TARGETS="gfx1151" && \
+  export HIPCC_COMPILE_FLAGS_APPEND="--offload-arch=gfx1151" && \
+  \
+  # ---- constraints: DO NOT import torch or triton ----
+  # torch line via pip show (no import, no GPU probe)
+  /torch-therock/.venv/bin/pip show torch | awk -F': ' '/^Version: /{print "torch=="$2}' > /tmp/constraints.txt && \
+  # pytorch-triton-rocm via importlib.metadata (safe; no module exec)
+  /torch-therock/.venv/bin/python -c "import sys;\
+  import importlib.metadata as m;\
+  print('pytorch-triton-rocm==' + m.version('pytorch-triton-rocm'))" \
+  >> /tmp/constraints.txt || echo '# pytorch-triton-rocm not installed' >> /tmp/constraints.txt && \
+  # ---- compute Torch CMake prefix WITHOUT importing torch ----
+  TORCH_CMAKE_PATH="$(/torch-therock/.venv/bin/python -c "import importlib.util, pathlib, sys;\
+  spec = importlib.util.find_spec('torch');\
+  import sys as _s;\
+  (_s.exit('Could not locate torch package.') if (not spec or not spec.origin) else None);\
+  torch_pkg = pathlib.Path(spec.origin).parent;\
+  print((torch_pkg / 'share' / 'cmake').as_posix())")" && \
+  # sanity check so we fail early with a clear message
+  test -f "$TORCH_CMAKE_PATH/Torch/TorchConfig.cmake" || { \
+  echo "TorchConfig.cmake not found under $TORCH_CMAKE_PATH"; \
+  find "$(dirname "$TORCH_CMAKE_PATH")" -maxdepth 3 -name 'TorchConfig.cmake' -print || true; \
+  exit 1; \
+  } && \
+  VLLM_TARGET_DEVICE=rocm \
+  CMAKE_PREFIX_PATH="$TORCH_CMAKE_PATH" \
+  Torch_DIR="$TORCH_CMAKE_PATH/Torch" \
+  CMAKE_ARGS="-DGPU_TARGETS=gfx1151 -DHIP_TARGETS=gfx1151 -DAMDGPU_TARGETS=gfx1151" \
+  /torch-therock/.venv/bin/uv pip install . --no-build-isolation --no-deps && /torch-therock/.venv/bin/uv pip install triton pydantic pytest safetensors git+https://github.com/0xrushi/Quark.git kernels  starlette httpx distro uvloop uvicorn python-multipart frozendict llvmlite
 
 # Runtime stage
 FROM archlinux:latest
 
 # Install runtime dependencies + compilation tools
 RUN pacman -Syu --noconfirm && \
-    pacman -S --noconfirm ca-certificates gcc make cmake ninja git && \
-    pacman -Scc --noconfirm && \
-    git clone --depth 1 https://github.com/pyenv/pyenv.git /opt/pyenv && \
-    export PYENV_ROOT=/opt/pyenv && \
-    export PATH=$PYENV_ROOT/bin:$PATH && \
-    eval "$(pyenv init -)" && \
-    pyenv install 3.12.9 && \
-    pyenv global 3.12.9
+  pacman -S --noconfirm ca-certificates gcc make cmake ninja git vim nano which && \
+  pacman -Scc --noconfirm && \
+  git clone --depth 1 https://github.com/pyenv/pyenv.git /opt/pyenv && \
+  export PYENV_ROOT=/opt/pyenv && \
+  export PATH=$PYENV_ROOT/bin:$PATH && \
+  eval "$(pyenv init -)" && \
+  pyenv install 3.12.9 && \
+  pyenv global 3.12.9
 
 # Copy complete environment from builder
 COPY --from=vllm-builder /opt/pyenv /opt/pyenv
@@ -125,8 +192,8 @@ ENV PYTORCH_ROCM_ARCH=gfx1151
 WORKDIR /torch-therock
 
 # Test installation
-RUN /torch-therock/.venv/bin/python -c "import torch; print('PyTorch version:', torch.__version__)" && \
-    /torch-therock/.venv/bin/python -c "import vllm; print('vLLM version:', vllm.__version__)"
+RUN /torch-therock/.venv/bin/python -c "import torch; print('PyTorch version:', torch.__version__); print('PyTorch ROCm support:', torch.cuda.is_available())" && \
+  /torch-therock/.venv/bin/python -c "import vllm; print('vLLM version:', vllm.__version__)"
 
 # Toolbx compatibility - fix permissions and add environment setup
 RUN chmod -R a+rwX /torch-therock
