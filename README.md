@@ -19,16 +19,18 @@ This setup is **highly experimental** on ROCm/Strix Halo. Some models work; **ma
 
 | Model (Hugging Face)               | Params / Quant |               Status | Required flags (if any)                              | Notes / Errors                                                                                       |
 | ---------------------------------- | -------------- | -------------------: | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `Qwen/Qwen2.5-7B-Instruct`         | 7B FP16        |              ✅ Works | (recommended) `--dtype float16`                      | Good baseline; simple serve works.                                                                   |
-| `meta-llama/Llama-2-7b-chat-hf`    | 7B FP16        |              ✅ Works | (recommended) `--dtype float16`                      | Stable.                                                                                              |
-| `Qwen/Qwen3-30B-A3B-Instruct-2507` | 30B (A3B) FP16 |              ✅ Works | (recommended) `--dtype float16`                      |  |
-| `Google/Gemma3-27B-Instruct`       | 27B FP16       |              ✅ Works | (recommended) `--dtype float16`                      | Slow         |
-| `Google/Gemma3-12B-Instruct`       | 12B FP16       |              ✅ Works | (recommended) `--dtype float16`                      |          |
-| `Google/Gemma3-4B-Instruct`        |4B FP16       |              ✅ Works | (recommended) `--dtype float16`                      |          |
-| `Qwen/Qwen3-14B-AWQ`               | 14B AWQ        | ✅ Works (with flags) | `--quantization awq --dtype float16 --enforce-eager` | On ROCm, eager avoids missing `awq_dequantize` during compile; vLLM auto‑sets `VLLM_USE_TRITON_AWQ`. |
-| `openai/gpt-oss-20b`               | 20B MXFP4      |              ❌ Fails | —                                                    | `ModuleNotFoundError: triton_kernels.matmul_ogs` (MXFP4 path not available in this image).           |
-| `zai-org/GLM-4.5-Air-FP8`          | FP8            |              ❌ Fails | —                                                    | `ValueError: type fp8e4nv not supported (only 'fp8e5')`.                                             |
-| `cpatonn/GLM-4.5-Air-AWQ-4bit`     | AWQ-4bit (MoE) |              ❌ Fails | —                                                    | Missing custom op: `torch.ops._C.gptq_marlin_repack` (Marlin kernels).                               |
+| `Qwen/Qwen2.5-7B-Instruct`          | 7B FP16        |              ✅ Works | (recommended) `--dtype float16`                      | Good baseline; simple serve works.                                                                   |
+| `meta-llama/Llama-2-7b-chat-hf`     | 7B FP16        |              ✅ Works | (recommended) `--dtype float16`                      | Stable.                                                                                              |
+| `Qwen/Qwen3-30B-A3B-Instruct-2507`  | 30B (A3B) FP16 |              ✅ Works | (recommended) `--dtype float16`                      |  |
+| `Qwen/Qwen3-4B-Instruct-2507`       | 4B FP16        |              ✅ Works | (recommended) `--dtype float16`                      |  |
+| `Google/Gemma3-27B-Instruct`        | 27B FP16       |              ✅ Works | (recommended) `--dtype float16`                      | Slow         |
+| `Google/Gemma3-12B-Instruct`        | 12B FP16       |              ✅ Works | (recommended) `--dtype float16`                      |          |
+| `Google/Gemma3-4B-Instruct`         | 4B FP16        |              ✅ Works | (recommended) `--dtype float16`                      |          |
+| `Qwen/Qwen3-14B-AWQ`                | 14B AWQ        | ✅ Works (with flags) | `--quantization awq --dtype float16 --enforce-eager` | On ROCm, eager avoids missing `awq_dequantize` during compile; vLLM auto‑sets `VLLM_USE_TRITON_AWQ`. |
+| `Eslzzyl/Qwen3-4B-Instruct-2507-AWQ`| 4B AWQ         | ✅ Works (with flags) | `--quantization awq --dtype float16 --enforce-eager` | On ROCm, eager avoids missing `awq_dequantize` during compile; vLLM auto‑sets `VLLM_USE_TRITON_AWQ`. |
+| `openai/gpt-oss-20b`                | 20B MXFP4      |              ❌ Fails | —                                                    | `ModuleNotFoundError: triton_kernels.matmul_ogs` (MXFP4 path not available in this image).           |
+| `zai-org/GLM-4.5-Air-FP8`           | FP8            |              ❌ Fails | —                                                    | `ValueError: type fp8e4nv not supported (only 'fp8e5')`.                                             |
+| `cpatonn/GLM-4.5-Air-AWQ-4bit`      | AWQ-4bit (MoE) |              ❌ Fails | —                                                    | Missing custom op: `torch.ops._C.gptq_marlin_repack` (Marlin kernels).                               |
 
 > If you get a model to work, please PR a new row with: **model name**, **exact flags**, vLLM version, `torch` & `triton` versions, and a note on **gfx1151** driver/kernel stack.
 
