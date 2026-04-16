@@ -13,7 +13,7 @@ on:
         default: ""
 
 env:
-  IMAGE_REPO: kyuz0/vllm-therock-gfx1151
+  IMAGE_REPO: lafunamor/vllm-therock-gfx1151
   DOCKER_BUILDKIT: "1"
 
 jobs:
