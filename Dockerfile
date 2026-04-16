@@ -1,31 +1,33 @@
-FROM registry.fedoraproject.org/fedora:43
+##############################################################################
+# Stage 1 – builder
+# Contains the full ROCm SDK + compiler toolchain needed to compile vLLM,
+# flash-attention, and bitsandbytes. Nothing from this stage except /opt/rocm
+# and /opt/venv is carried forward.
+##############################################################################
+FROM registry.fedoraproject.org/fedora:43 AS builder
 
-# 1. System Base & Build Tools
-# Added 'gperftools-libs' for tcmalloc (fixes double-free)
+# System build tools + runtime deps (gperftools-libs for tcmalloc)
 COPY scripts/install_deps.sh /tmp/install_deps.sh
 RUN sh /tmp/install_deps.sh
 
-# 2. Install "TheRock" ROCm SDK (Tarball Method)
+# TheRock ROCm SDK (full SDK including LLVM/Clang needed as CC/CXX)
 WORKDIR /tmp
 ARG ROCM_MAJOR_VER=7
 ARG GFX=gfx1151
-# We pass ARGs to the script via ENV or rely on defaults. 
-# But let's be explicit and export them for the RUN command.
 COPY scripts/install_rocm_sdk.sh /tmp/install_rocm_sdk.sh
 RUN chmod +x /tmp/install_rocm_sdk.sh && \
   export ROCM_MAJOR_VER=$ROCM_MAJOR_VER && \
   export GFX=$GFX && \
   /tmp/install_rocm_sdk.sh
 
-# 4. Python Venv Setup
+# Python venv
 RUN /usr/bin/python3.12 -m venv /opt/venv
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 ENV PIP_NO_CACHE_DIR=1
-RUN printf 'source /opt/venv/bin/activate\n' > /etc/profile.d/venv.sh
 RUN python -m pip install --upgrade pip wheel packaging "setuptools<80.0.0"
 
-# 5. Install PyTorch (TheRock Nightly)
+# PyTorch (TheRock Nightly) — slow and stable, keep early for cache
 RUN python -m pip install \
   --index-url https://rocm.nightlies.amd.com/v2-staging/gfx1151/ \
   --pre torch torchaudio torchvision && \
@@ -38,55 +40,49 @@ WORKDIR /opt
 ENV FLASH_ATTENTION_TRITON_AMD_ENABLE="TRUE"
 ENV LD_LIBRARY_PATH="/opt/rocm/lib:/opt/rocm/lib64:$LD_LIBRARY_PATH"
 
-RUN git clone https://github.com/ROCm/flash-attention.git &&\ 
+RUN git clone https://github.com/ROCm/flash-attention.git &&\
   cd flash-attention &&\
   git checkout main_perf &&\
   python setup.py install && \
   cd /opt && rm -rf /opt/flash-attention
 
-# 6. Clone vLLM
+# Clone vLLM
 RUN git clone https://github.com/vllm-project/vllm.git /opt/vllm
 WORKDIR /opt/vllm
 
-# --- PATCHING ---
+# Patch for Strix Halo (gfx1151)
 COPY scripts/patch_strix.py /opt/vllm/patch_strix.py
 RUN python /opt/vllm/patch_strix.py && \
-  sed -i 's/gfx1200;gfx1201/gfx1151/' CMakeLists.txt  
+  sed -i 's/gfx1200;gfx1201/gfx1151/' CMakeLists.txt
 
-# 7. Build vLLM (Wheel Method) with CLANG Host Compiler
+# Build vLLM wheel with ROCm Clang as host compiler
 RUN python -m pip install --upgrade cmake ninja packaging wheel numpy "setuptools-scm>=8" "setuptools<80.0.0" scikit-build-core pybind11
 ENV ROCM_HOME="/opt/rocm"
 ENV HIP_PATH="/opt/rocm"
 ENV VLLM_TARGET_DEVICE="rocm"
 ENV PYTORCH_ROCM_ARCH="gfx1151"
-ENV HIP_ARCHITECTURES="gfx1151"          
-ENV AMDGPU_TARGETS="gfx1151"              
+ENV HIP_ARCHITECTURES="gfx1151"
+ENV AMDGPU_TARGETS="gfx1151"
 ENV MAX_JOBS="4"
 
-# --- CRITICAL FIX FOR SEGFAULT ---
-# We force the Host Compiler (CC/CXX) to be the ROCm Clang, not Fedora GCC.
-# This aligns the ABI of the compiled vLLM extensions with PyTorch.
+# Force ROCm Clang as CC/CXX to align ABI with PyTorch (prevents segfault)
 ENV CC="/opt/rocm/llvm/bin/clang"
 ENV CXX="/opt/rocm/llvm/bin/clang++"
 
 RUN export HIP_DEVICE_LIB_PATH=$(find /opt/rocm -type d -name bitcode -print -quit) && \
   echo "Compiling with Bitcode: $HIP_DEVICE_LIB_PATH" && \
-  export CMAKE_ARGS="-DROCM_PATH=/opt/rocm -DHIP_PATH=/opt/rocm -DAMDGPU_TARGETS=gfx1151 -DHIP_ARCHITECTURES=gfx1151" && \   
+  export CMAKE_ARGS="-DROCM_PATH=/opt/rocm -DHIP_PATH=/opt/rocm -DAMDGPU_TARGETS=gfx1151 -DHIP_ARCHITECTURES=gfx1151" && \
   python -m pip wheel --no-build-isolation --no-deps -w /tmp/dist -v . && \
   python -m pip install /tmp/dist/*.whl
 
 RUN python -m pip install ray
 
-# --- bitsandbytes (ROCm) ---
+# bitsandbytes (ROCm)
 WORKDIR /opt
 RUN git clone -b rocm_enabled_multi_backend https://github.com/ROCm/bitsandbytes.git
 WORKDIR /opt/bitsandbytes
-
-# Explicitly set HIP_PLATFORM (Docker ENV, not /etc/profile)
 ENV HIP_PLATFORM="amd"
 ENV CMAKE_PREFIX_PATH="/opt/rocm"
-
-# Force CMake to use the System ROCm Compiler (/opt/rocm/llvm/bin/clang++)
 RUN cmake -S . \
   -DGPU_TARGETS="gfx1151" \
   -DBNB_ROCM_ARCH="gfx1151" \
@@ -97,13 +93,54 @@ RUN cmake -S . \
   make -j$(nproc) && \
   python -m pip install --no-cache-dir . --no-build-isolation --no-deps
 
-# 8. Final Cleanup & Runtime
+# Strip debug symbols and remove bytecode caches from venv
 WORKDIR /opt
-RUN chmod -R a+rwX /opt && \
-  find /opt/venv -type f -name "*.so" -exec strip -s {} + 2>/dev/null || true && \
-  find /opt/venv -type d -name "__pycache__" -prune -exec rm -rf {} + && \
-  rm -rf /root/.cache/pip || true && \
-  dnf clean all && rm -rf /var/cache/dnf/*
+RUN find /opt/venv -type f -name "*.so" -exec strip -s {} + 2>/dev/null || true && \
+  find /opt/venv -type d -name "__pycache__" -prune -exec rm -rf {} +
+
+##############################################################################
+# Stage 2 – runtime
+# Clean Fedora base with only runtime packages. Receives /opt/rocm (full,
+# generous copy) and /opt/venv from builder. No compiler toolchain, no source
+# trees, no build caches.
+##############################################################################
+FROM registry.fedoraproject.org/fedora:43
+
+# Runtime-only packages — no gcc, cmake, ninja, *-devel, git, aria2c
+RUN dnf -y install --setopt=install_weak_deps=False --nodocs \
+  python3.12 libatomic bash ca-certificates curl rsync \
+  ffmpeg-free \
+  vim nano dialog \
+  libdrm numactl-libs gperftools-libs \
+  iproute libibverbs-utils procps-ng \
+  perftest ping iperf3 perfquery \
+  && dnf clean all && rm -rf /var/cache/dnf/*
+
+# ROCm runtime — full copy, keeping all libs generously to avoid runtime surprises
+COPY --from=builder /opt/rocm /opt/rocm
+
+# Python venv with all compiled packages (vLLM, PyTorch, flash-attn, bnb, ray)
+COPY --from=builder /opt/venv /opt/venv
+
+# Profile script generated by install_rocm_sdk.sh (sets ROCM_PATH, LD_LIBRARY_PATH etc.)
+COPY --from=builder /etc/profile.d/rocm-sdk.sh /etc/profile.d/rocm-sdk.sh
+
+# Venv setup
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+ENV PIP_NO_CACHE_DIR=1
+RUN printf 'source /opt/venv/bin/activate\n' > /etc/profile.d/venv.sh
+
+# Runtime environment
+ENV FLASH_ATTENTION_TRITON_AMD_ENABLE="TRUE"
+ENV LD_LIBRARY_PATH="/opt/rocm/lib:/opt/rocm/lib64:$LD_LIBRARY_PATH"
+ENV ROCM_HOME="/opt/rocm"
+ENV HIP_PATH="/opt/rocm"
+ENV VLLM_TARGET_DEVICE="rocm"
+ENV PYTORCH_ROCM_ARCH="gfx1151"
+ENV HIP_ARCHITECTURES="gfx1151"
+ENV AMDGPU_TARGETS="gfx1151"
+ENV HIP_PLATFORM="amd"
 
 COPY scripts/01-rocm-env-for-triton.sh /etc/profile.d/01-rocm-env-for-triton.sh
 COPY scripts/99-toolbox-banner.sh /etc/profile.d/99-toolbox-banner.sh
@@ -130,21 +167,14 @@ RUN chmod +x /opt/start-vllm /opt/start-vllm-cluster /opt/vllm_cluster_bench.py 
 RUN chmod 0644 /etc/profile.d/*.sh
 RUN printf 'ulimit -S -c 0\n' > /etc/profile.d/90-nocoredump.sh && chmod 0644 /etc/profile.d/90-nocoredump.sh
 
-# 9. Install Custom RCCL (gfx1151) - Replaces standard library with manually built one
+# Custom RCCL (gfx1151) — replaces stock library with RDMA-capable build
 COPY custom_libs/librccl.so.1.gz /tmp/librccl.so.1.gz
 RUN echo "Installing Custom RCCL..." && \
   gzip -d /tmp/librccl.so.1.gz && \
   chmod 755 /tmp/librccl.so.1 && \
-  # Replace /opt/rocm library strictly as managed_rccl_install.sh does
   cp -fv /tmp/librccl.so.1 /opt/rocm/lib/librccl.so.1.0 && \
-  # Replace /opt/venv library
   find /opt/venv -name "librccl.so.1" -exec cp -fv /tmp/librccl.so.1 {} + && \
   rm /tmp/librccl.so.1
-
-# 10. Force Upgrade Transformers (User Override)
-# Required for GLM Flash, Qwen 3.5 etc.... vLLM reports incompatibility with transformers >= 5, 
-# but this version (5.3.0) has been tested and confirmed working.
-RUN python -m pip install transformers==5.3.0
 
 RUN chmod -R a+rwX /opt
 
