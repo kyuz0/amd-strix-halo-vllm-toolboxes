@@ -118,8 +118,37 @@ RUN dnf -y install --setopt=install_weak_deps=False --nodocs \
   perftest ping iperf3 perfquery \
   && dnf clean all && rm -rf /var/cache/dnf/*
 
-# ROCm runtime — full copy, keeping all libs generously to avoid runtime surprises
+# ROCm runtime — full copy, then strip everything not needed at runtime
 COPY --from=builder /opt/rocm /opt/rocm
+RUN \
+  # Test/benchmark client suites
+  rm -rf /opt/rocm/clients /opt/rocm/tests \
+  # Profiler and video decode tooling (irrelevant for LLM inference)
+  /opt/rocm/share/rocprofiler-systems \
+  /opt/rocm/share/rocprofiler-sdk \
+  /opt/rocm/share/rocdecode \
+  /opt/rocm/lib/rdc \
+  /opt/rocm/lib/rocprofiler-systems \
+  # Static libraries — build-time only, never loaded at runtime
+  /opt/rocm/lib/libdevice_conv_operations.a \
+  /opt/rocm/lib/libdevice_reduction_operations.a \
+  /opt/rocm/lib/libdevice_contraction_operations.a \
+  /opt/rocm/lib/librocshmem.a \
+  # LLVM static libs — same, build-time only
+  && find /opt/rocm/lib/llvm/lib -name '*.a' -delete \
+  # Test/bench/validate binaries and gtest data files in bin/
+  && find /opt/rocm/bin \( \
+    -name '*-test' -o -name '*_test' -o \
+    -name '*-bench' -o \
+    -name '*-validate' -o \
+    -name '*_gtest.data' -o \
+    -name '*-gtest' \
+  \) -delete \
+  # Specific build/tuning tools not needed at runtime
+  && rm -f \
+    /opt/rocm/bin/hipify-clang \
+    /opt/rocm/bin/rocblas-gemm-tune \
+    /opt/rocm/bin/rocshmem_functional_tests
 
 # Python venv with all compiled packages (vLLM, PyTorch, flash-attn, bnb, ray)
 COPY --from=builder /opt/venv /opt/venv
