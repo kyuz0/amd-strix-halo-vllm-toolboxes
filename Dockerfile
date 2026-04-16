@@ -107,10 +107,10 @@ RUN find /opt/venv -type f -name "*.so" -exec strip -s {} + 2>/dev/null || true 
 FROM registry.fedoraproject.org/fedora:43
 
 # Runtime-only packages — no gcc, cmake, ninja, git, aria2c
-# glibc-devel required: Triton JIT-compiles kernels at runtime via ROCm Clang
-# and needs system C headers (stdlib.h etc.)
+# glibc-devel + python3.12-devel required: Triton JIT-compiles Python extension
+# modules at runtime via ROCm Clang and needs stdlib.h and Python.h
 RUN dnf -y install --setopt=install_weak_deps=False --nodocs \
-  python3.12 libatomic bash ca-certificates curl rsync \
+  python3.12 python3.12-devel libatomic bash ca-certificates curl rsync \
   ffmpeg-free \
   vim nano dialog \
   libdrm numactl-libs gperftools-libs glibc-devel \
