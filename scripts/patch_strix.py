@@ -311,6 +311,90 @@ except Exception:
             p_rocm_plat.write_text(txt)
             print(" -> Patched vllm/platforms/rocm.py (ROCM-21812 APU VRAM Dynamic Margin)")
 
+    # Patch 11: vllm/transformers_utils/gguf_utils.py
+    # extract_vision_config_from_gguf only special-cases Gemma3, and
+    # maybe_patch_hf_config_from_gguf only wires the vision tower when
+    # model_type is gemma3{,_text}. Add projector branches for nemotron_v2_vl
+    # (Radio, used by NanoNemotronVL) and pixtral (Mistral3), and plumb the
+    # vision_config into the parent for mistral3/nemotron_h{,_moe} so an
+    # mmproj.gguf sibling is actually exposed at load time.
+    p_gguf = Path('vllm/transformers_utils/gguf_utils.py')
+    if p_gguf.exists():
+        txt = p_gguf.read_text()
+
+        # Branch in extract_vision_config_from_gguf
+        if '"nemotron_v2_vl"' not in txt and 'projector_type == VisionProjectorType.GEMMA3' in txt:
+            txt = txt.replace(
+                '    if projector_type == VisionProjectorType.GEMMA3:\n'
+                '        # Gemma3 doesn\'t use the vision pooling head (multihead attention)\n'
+                '        # This is a vLLM-specific parameter used in SiglipVisionTransformer\n'
+                '        config_params["vision_use_head"] = False\n'
+                '        logger.info("Detected Gemma3 projector, disabling vision pooling head")',
+                '    if projector_type == VisionProjectorType.GEMMA3:\n'
+                '        config_params["vision_use_head"] = False\n'
+                '        logger.info("Detected Gemma3 projector, disabling vision pooling head")\n'
+                '    elif projector_type == "nemotron_v2_vl":\n'
+                '        # Nemotron-3 Nano Omni: C-RADIOv4-H + 2-layer MLP projector. The vision\n'
+                '        # tower has its own pooling so we disable the SigLIP head here too.\n'
+                '        config_params["vision_use_head"] = False\n'
+                '        logger.info("Detected nemotron_v2_vl projector (Nano Omni / Radio)")\n'
+                '    elif projector_type == "pixtral":\n'
+                '        # Mistral3 Pixtral: 48-layer ViT, image up to 1540px, patch 14.\n'
+                '        # The projector handles its own break tokens; no SigLIP pooling head.\n'
+                '        config_params["vision_use_head"] = False\n'
+                '        logger.info("Detected pixtral projector (Mistral3)")'
+            )
+
+        # Patch maybe_patch_hf_config_from_gguf to also wire Mistral3 / NemotronH.
+        # Strategy: keep the existing Gemma3 branch verbatim; append additional
+        # branches that run only when model_type matches and a vision_config was
+        # successfully extracted.
+        if "is_mistral3 = hf_config.model_type" not in txt and "is_gemma3 = hf_config.model_type" in txt:
+            txt = txt.replace(
+                '        is_gemma3 = hf_config.model_type in ("gemma3", "gemma3_text")\n'
+                '        if vision_config is not None and is_gemma3:\n'
+                '            new_hf_config = Gemma3Config(\n'
+                '                text_config=text_config,\n'
+                '                vision_config=vision_config,\n'
+                '                architectures=["Gemma3ForConditionalGeneration"],\n'
+                '            )\n'
+                '            hf_config = new_hf_config\n',
+                '        is_gemma3 = hf_config.model_type in ("gemma3", "gemma3_text")\n'
+                '        is_mistral3 = hf_config.model_type in ("mistral3", "ministral3")\n'
+                '        is_nemotron_h_omni = hf_config.model_type in (\n'
+                '            "nemotron_h_moe", "nemotron_h", "nemotron_v2_vl",\n'
+                '        )\n'
+                '        if vision_config is not None and is_gemma3:\n'
+                '            new_hf_config = Gemma3Config(\n'
+                '                text_config=text_config,\n'
+                '                vision_config=vision_config,\n'
+                '                architectures=["Gemma3ForConditionalGeneration"],\n'
+                '            )\n'
+                '            hf_config = new_hf_config\n'
+                '        elif vision_config is not None and is_mistral3:\n'
+                '            # Mistral3 keeps text_config under .text_config and the vision\n'
+                '            # tower under .vision_config. Side-load both onto the parent.\n'
+                '            try:\n'
+                '                hf_config.vision_config = vision_config\n'
+                '                hf_config.architectures = ["Mistral3ForConditionalGeneration"]\n'
+                '                logger.info("Patched HF config for Mistral3 GGUF (Pixtral mmproj)")\n'
+                '            except Exception as _e:\n'
+                '                logger.warning("Mistral3 mmproj wiring failed: %s", _e)\n'
+                '        elif vision_config is not None and is_nemotron_h_omni:\n'
+                '            # NanoNemotronVL expects vision_config under .vision_config and\n'
+                '            # registers the multimodal head from architectures.\n'
+                '            try:\n'
+                '                hf_config.vision_config = vision_config\n'
+                '                if not getattr(hf_config, "architectures", None):\n'
+                '                    hf_config.architectures = ["NemotronH_Nano_Omni_Reasoning_V3"]\n'
+                '                logger.info("Patched HF config for Nemotron-Omni GGUF (nemotron_v2_vl mmproj)")\n'
+                '            except Exception as _e:\n'
+                '                logger.warning("Nemotron-Omni mmproj wiring failed: %s", _e)\n'
+            )
+
+        p_gguf.write_text(txt)
+        print(" -> Patched vllm/transformers_utils/gguf_utils.py (Patch_11: nemotron_v2_vl + pixtral GGUF projector)")
+
     print("Successfully patched vLLM/Environment for Strix Halo.")
 
 if __name__ == "__main__":
