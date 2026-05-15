@@ -224,6 +224,33 @@ server. In the validation above, `/v1/models` returned HTTP `200` and listed
 `Qwen/Qwen2.5-7B-Instruct`; `/v1/chat/completions` returned a valid assistant
 response.
 
+### Authenticated Conservative API Validation
+
+After Hugging Face authentication with `hf auth login`, the same Ubuntu Docker
+vLLM validation was rerun against the cached model data. The authenticated run
+used `docker.io/kyuz0/vllm-therock-gfx1151:stable` with
+`Qwen/Qwen2.5-7B-Instruct` on port `8010` and the same conservative flags:
+
+- `--dtype bfloat16`
+- `--max-model-len 8192`
+- `--gpu-memory-utilization 0.60`
+- `--enforce-eager`
+
+In that authenticated run, `/v1/models` returned HTTP `200`.
+`/v1/chat/completions` returned HTTP `200` and produced exactly:
+
+```text
+authenticated Docker vLLM validation passed
+```
+
+The rerun did not show the previous unauthenticated Hugging Face warning. vLLM
+reported that model loading took `14.34 GiB` and that available KV cache memory
+was `52.87 GiB`. While vLLM was running, host memory showed about `46 GiB`
+available.
+
+This validates only the conservative authenticated Docker/vLLM API path above.
+It is not larger-model validation and is not performance validation.
+
 ## Fedora Toolbx Is Separate
 
 The main README still documents Fedora Toolbx and RDMA-oriented workflows. This
