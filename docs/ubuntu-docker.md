@@ -84,6 +84,21 @@ HF_HOME=/data/hf-cache VLLM_CACHE_ROOT=/data/vllm-cache \
   ./scripts/run-ubuntu-docker-vllm.sh shell
 ```
 
+## Hugging Face Authentication
+
+Do not paste Hugging Face tokens into docs, issues, pull requests, or chat.
+Inside this image, `huggingface-cli login` is deprecated. Use:
+
+```bash
+hf auth login
+hf auth whoami
+```
+
+The Docker runner mounts the host Hugging Face cache into
+`/root/.cache/huggingface`, so authentication persists for future runs. The git
+credential helper warning can be ignored for model downloads; it matters only
+for Git-based Hugging Face pushes.
+
 ## First Run: Conservative Validation
 
 Start with an interactive shell:
