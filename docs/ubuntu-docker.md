@@ -102,6 +102,38 @@ The smoke test checks device nodes, ROCm visibility, Python package imports,
 PyTorch ROCm availability, and basic GPU discovery before any vLLM server is
 started.
 
+## Memory Exposure Observations
+
+Ubuntu 26.04 validation on kernel `7.0.0-15-generic` used the
+`docker.io/kyuz0/vllm-therock-gfx1151:stable` image. The Docker ROCm/vLLM smoke
+test passed on that host.
+
+The host kernel command line included:
+
+```text
+iommu=pt ttm.pages_limit=32505856 ttm.page_pool_size=32505856 amdgpu.gttsize=126976
+```
+
+With that configuration, `dmesg` reported:
+
+```text
+126976M of GTT memory ready.
+```
+
+Treat this as kernel GTT readiness, not as proof that a single userspace
+allocation can consume all of that memory. In the same validation, PyTorch still
+reported `reported_total_memory_mib` around `62890`, so PyTorch's reported total
+memory should not be presented as the whole usable GTT story either.
+
+High-memory allocation tests must be run with other GPU/model containers
+stopped. With existing Strix model containers still running, a 48 GiB PyTorch
+allocation caused global OOM or hung-system behavior. After stopping
+`qwen3-coder` and `qwen3-6` and disabling their restart policy, single PyTorch
+`uint8` allocations of 40 GiB, 44 GiB, and 48 GiB passed cleanly.
+
+The current proven clean single-allocation size from this validation is 48 GiB.
+Do not claim that 126 GiB usable allocation has been proven from these results.
+
 Only after the smoke test passes should you launch vLLM:
 
 ```bash
