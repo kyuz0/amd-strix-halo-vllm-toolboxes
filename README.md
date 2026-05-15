@@ -135,10 +135,9 @@ Docker-native path in [docs/ubuntu-docker.md](docs/ubuntu-docker.md).
 ```
 
 This Ubuntu path is separate from Fedora Toolbx. It does not use Podman,
-Distrobox, Fedora Toolbx, Ubuntu toolbox, or LXC. It passes `/dev/kfd`,
-`/dev/dri`, the `video` and `render` groups, `seccomp=unconfined`, `ipc=host`,
-and host networking to Docker, and mounts Hugging Face and vLLM caches from the
-host.
+Distrobox, Fedora Toolbx, Ubuntu toolbox, or LXC. It uses Docker Engine only;
+see the Ubuntu Docker guide for runtime flags, prerequisites, and conservative
+validation notes.
 
 Start with the conservative smoke test before launching vLLM:
 
@@ -148,7 +147,8 @@ Start with the conservative smoke test before launching vLLM:
 
 On Ubuntu, GRUB is updated with `sudo update-grub`, not
 `sudo grub2-mkconfig -o /boot/grub2/grub.cfg`. Host boot parameter changes are
-not made by this repository's scripts.
+manual, risk-bearing host state changes and are not made by this repository's
+scripts.
 
 ---
 

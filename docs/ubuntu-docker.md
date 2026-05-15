@@ -13,17 +13,45 @@ docker.io/kyuz0/vllm-therock-gfx1151:stable
 Use `:stable` first. Use `:latest` only when you intentionally want to test a
 newer image that may have upstream regressions.
 
-## Tested Host Shape
+## Tested Environment
 
-This document targets Ubuntu 26.04 LTS on AMD Strix Halo / Radeon 8050S or
-8060S class hardware, with Docker Engine already installed and active.
+This path has been observed working on:
 
-Known-good host expectations:
+- Ubuntu 26.04 LTS
+- Kernel `7.0.0-15-generic`
+- AMD Strix Halo / Ryzen AI Max+ 395 / Radeon 8060S-class hardware
+- Docker Engine
+- `docker.io/kyuz0/vllm-therock-gfx1151:stable`
 
-- `/dev/kfd` exists and is accessible to the `render` group.
-- `/dev/dri/card*` exists and is accessible to the `video` group.
-- `/dev/dri/renderD*` exists and is accessible to the `render` group.
-- The user running Docker is already in `docker`, `video`, and `render`.
+Conservative observed validation covered:
+
+- `Qwen/Qwen2.5-7B-Instruct`
+- `google/gemma-4-26B-A4B-it`
+
+Treat this as observed validation for one Ubuntu 26.04 Strix Halo setup, not a
+guarantee that every Ubuntu 26.04 Strix Halo system will behave identically.
+
+## Prerequisite Checklist
+
+Before running the container, check the host:
+
+```bash
+docker --version
+docker compose version
+groups
+ls -l /dev/kfd /dev/dri
+cat /proc/cmdline
+```
+
+Expected conditions:
+
+- Docker Engine is installed and active.
+- The user can run Docker.
+- `/dev/kfd` exists.
+- `/dev/dri` exists.
+- The user has `video` and `render` group access.
+- Other GPU or model-serving workloads are stopped before high-memory
+  validation.
 - ROCm tools do not need to be installed on the Ubuntu host. ROCm is validated
   inside the container.
 
@@ -46,6 +74,9 @@ sudo reboot
 
 Do not run those commands from this repository's scripts. They are host state
 changes and should be handled manually by the system owner.
+
+Incorrect kernel parameters can affect boot or GPU memory behavior. Back up
+`/etc/default/grub` and keep a recovery path before changing them.
 
 If the current kernel command line already contains `iommu=pt` and
 `ttm.pages_limit=32505856` but does not contain `amdgpu.gttsize=126976`, treat
@@ -140,11 +171,11 @@ allocation can consume all of that memory. In the same validation, PyTorch still
 reported `reported_total_memory_mib` around `62890`, so PyTorch's reported total
 memory should not be presented as the whole usable GTT story either.
 
-High-memory allocation tests must be run with other GPU/model containers
-stopped. With existing Strix model containers still running, a 48 GiB PyTorch
-allocation caused global OOM or hung-system behavior. After stopping
-`qwen3-coder` and `qwen3-6` and disabling their restart policy, single PyTorch
-`uint8` allocations of 40 GiB, 44 GiB, and 48 GiB passed cleanly.
+High-memory allocation tests should be run only after stopping other GPU or
+model-serving workloads. In the observed validation, a 48 GiB PyTorch
+allocation was not clean while other model-serving workloads were active. After
+those workloads were stopped, single PyTorch `uint8` allocations of 40 GiB,
+44 GiB, and 48 GiB passed cleanly.
 
 The current proven clean single-allocation size from this validation is 48 GiB.
 Do not claim that 126 GiB usable allocation has been proven from these results.
@@ -156,8 +187,7 @@ start-vllm
 ```
 
 For a direct server launch instead of the TUI, pass the command after `--`.
-Port `8000` may already be occupied by another service or legacy container; in
-one validation it was occupied by `legacy-printer`. Check before launching, or
+Port `8000` may already be occupied on some hosts. Check before launching, or
 use another port:
 
 ```bash
@@ -191,10 +221,13 @@ that environment variable.
 The Docker runner is repo-local:
 
 ```bash
+./scripts/run-ubuntu-docker-vllm.sh print
 ./scripts/run-ubuntu-docker-vllm.sh shell
 ./scripts/run-ubuntu-docker-vllm.sh smoke
 ./scripts/run-ubuntu-docker-vllm.sh run -- start-vllm
 ```
+
+Use `print` to inspect the Docker command before running the container.
 
 It intentionally does not use or require Podman, Distrobox, Fedora Toolbx,
 Ubuntu toolbox, LXC, host ROCm tools, package installation, or `sudo`.
@@ -279,9 +312,20 @@ larger conservative vLLM validation passed
 ```
 
 This validates only conservative serving for `google/gemma-4-26B-A4B-it`
-through the Ubuntu Docker path above. It does not validate maximum context,
-high concurrency, AITER, or 120B-class models, and it should not be presented as
-a performance result.
+through the Ubuntu Docker path above, and it should not be presented as a
+performance result.
+
+## Known Limitations / Not Validated
+
+This Ubuntu Docker path has not validated:
+
+- 120B-class models
+- Maximum context length
+- High concurrency
+- Production service hardening
+- RDMA/RoCE clustering
+- Tensor parallelism across nodes
+- AITER performance mode
 
 ## Fedora Toolbx Is Separate
 
