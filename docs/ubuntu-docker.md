@@ -140,15 +140,36 @@ Only after the smoke test passes should you launch vLLM:
 start-vllm
 ```
 
-For a direct server launch instead of the TUI, pass the command after `--`:
+For a direct server launch instead of the TUI, pass the command after `--`.
+Port `8000` may already be occupied by another service or legacy container; in
+one validation it was occupied by `legacy-printer`. Check before launching, or
+use another port:
+
+```bash
+ss -ltnp | grep ':8000'
+lsof -iTCP:8000 -sTCP:LISTEN
+```
+
+The first conservative API validation model was
+`Qwen/Qwen2.5-7B-Instruct`. This is a small validation target for proving the
+Docker/vLLM API path, not the final performance target and not proof that
+larger models are validated.
 
 ```bash
 ./scripts/run-ubuntu-docker-vllm.sh run -- \
   python -m vllm.entrypoints.openai.api_server \
     --host 0.0.0.0 \
-    --port 8000 \
-    --model meta-llama/Meta-Llama-3.1-8B-Instruct
+    --port 8010 \
+    --model Qwen/Qwen2.5-7B-Instruct \
+    --dtype bfloat16 \
+    --max-model-len 8192 \
+    --gpu-memory-utilization 0.60 \
+    --enforce-eager
 ```
+
+Do not make this direct-launch example depend on `VLLM_ATTENTION_BACKEND`; the
+validated `docker.io/kyuz0/vllm-therock-gfx1151:stable` build did not recognize
+that environment variable.
 
 ## Helper Script
 
@@ -165,14 +186,28 @@ Ubuntu toolbox, LXC, host ROCm tools, package installation, or `sudo`.
 
 ## API Check After vLLM Starts
 
-Once vLLM is listening on port 8000:
+Ubuntu 26.04 validation on kernel `7.0.0-15-generic` with
+`docker.io/kyuz0/vllm-therock-gfx1151:stable` launched
+`Qwen/Qwen2.5-7B-Instruct` successfully on port `8010` using:
+
+- `--dtype bfloat16`
+- `--max-model-len 8192`
+- `--gpu-memory-utilization 0.60`
+- `--enforce-eager`
+
+During startup, vLLM reported that model loading took `14.34 GiB` of memory and
+reported `52.87 GiB` of available KV cache memory.
+
+Once vLLM is listening, query the port selected at launch:
 
 ```bash
-curl -s http://localhost:8000/v1/models
+curl -s http://localhost:8010/v1/models
 ```
 
 Then send a small OpenAI-compatible request using the model ID returned by the
-server.
+server. In the validation above, `/v1/models` returned HTTP `200` and listed
+`Qwen/Qwen2.5-7B-Instruct`; `/v1/chat/completions` returned a valid assistant
+response.
 
 ## Fedora Toolbx Is Separate
 
