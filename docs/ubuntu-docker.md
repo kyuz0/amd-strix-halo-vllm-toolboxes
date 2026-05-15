@@ -251,6 +251,38 @@ available.
 This validates only the conservative authenticated Docker/vLLM API path above.
 It is not larger-model validation and is not performance validation.
 
+### Larger-Model Conservative API Validation
+
+A later Ubuntu Docker validation used the larger repo-listed model
+`google/gemma-4-26B-A4B-it` with
+`docker.io/kyuz0/vllm-therock-gfx1151:stable` on port `8010`.
+
+This was a separate validation from the earlier
+`Qwen/Qwen2.5-7B-Instruct` checks. It used the same conservative serving
+flags:
+
+- `--dtype bfloat16`
+- `--max-model-len 8192`
+- `--gpu-memory-utilization 0.60`
+- `--enforce-eager`
+
+During model loading, `/health` initially returned connection refused because
+the API port was not bound until model load completed. Treat this as expected
+startup behavior for curl checks: wait until vLLM has finished loading and the
+server is actually listening before using `/health`, `/v1/models`, or
+`/v1/chat/completions` as validation signals.
+
+After startup completed, `/v1/chat/completions` returned a valid response:
+
+```text
+larger conservative vLLM validation passed
+```
+
+This validates only conservative serving for `google/gemma-4-26B-A4B-it`
+through the Ubuntu Docker path above. It does not validate maximum context,
+high concurrency, AITER, or 120B-class models, and it should not be presented as
+a performance result.
+
 ## Fedora Toolbx Is Separate
 
 The main README still documents Fedora Toolbx and RDMA-oriented workflows. This
