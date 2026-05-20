@@ -32,7 +32,7 @@ This is a hobby project maintained in my spare time. If you find these toolboxes
 * [Tested Models (Benchmarks)](#tested-models-benchmarks)
 * [1) Toolbx vs Docker/Podman](#1-toolbx-vs-dockerpodman)
 * [2) Quickstart — Fedora Toolbx](#2-quickstart--fedora-toolbx)
-* [3) Quickstart — Ubuntu (Distrobox)](#3-quickstart--ubuntu-distrobox)
+* [3) Quickstart — Ubuntu Docker Engine](#3-quickstart--ubuntu-docker-engine)
 * [4) Testing the API](#4-testing-the-api)
 * [5) Use a Web UI for Chatting](#5-use-a-web-ui-for-chatting)
 * [6) Host Configuration](#6-host-configuration)
@@ -125,27 +125,30 @@ start-vllm
 
 ---
 
-## 3) Quickstart — Ubuntu (Distrobox)
+## 3) Quickstart — Ubuntu Docker Engine
 
-Ubuntu’s toolbox package still breaks GPU access, so use Distrobox instead:
-
-```bash
-distrobox create -n vllm \
-  --image docker.io/kyuz0/vllm-therock-gfx1151:stable \
-  --additional-flags "--device /dev/kfd --device /dev/dri --group-add video --group-add render --security-opt seccomp=unconfined"
-
-distrobox enter vllm
-```
-
-> **Verification:** Run `rocm-smi` to check GPU status.
-
-### Serving a Model (Easiest Way)
-
-The toolbox includes a TUI wizard called **`start-vllm`** which includes pre-configured models and handles the launch flags for you. This is the easiest way to get started.
+For Ubuntu 26.04 hosts that should use Docker Engine only, follow the
+Docker-native path in [docs/ubuntu-docker.md](docs/ubuntu-docker.md).
 
 ```bash
-start-vllm
+./scripts/run-ubuntu-docker-vllm.sh shell
 ```
+
+This Ubuntu path is separate from Fedora Toolbx. It does not use Podman,
+Distrobox, Fedora Toolbx, Ubuntu toolbox, or LXC. It uses Docker Engine only;
+see the Ubuntu Docker guide for runtime flags, prerequisites, and conservative
+validation notes.
+
+Start with the conservative smoke test before launching vLLM:
+
+```bash
+./scripts/run-ubuntu-docker-vllm.sh smoke
+```
+
+On Ubuntu, GRUB is updated with `sudo update-grub`, not
+`sudo grub2-mkconfig -o /boot/grub2/grub.cfg`. Host boot parameter changes are
+manual, risk-bearing host state changes and are not made by this repository's
+scripts.
 
 ---
 
