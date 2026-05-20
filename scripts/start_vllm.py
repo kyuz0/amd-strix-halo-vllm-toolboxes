@@ -84,7 +84,7 @@ def get_verified_config(model_id, tp_size, max_seqs):
     """
     default_config = {
         "ctx": "auto",
-        "util": 0.90 # Safe default
+        "util": float(models.GPU_UTIL),
     }
     
     if not RESULTS_FILE.exists():
@@ -147,14 +147,34 @@ def nuke_vllm_cache():
 def configure_and_launch(model_idx, gpu_count):
     model_id = MODELS_TO_RUN[model_idx]
     config = MODEL_TABLE[model_id]
-    
+
+    # Validate stringly-typed fields here so a typo surfaces with the
+    # offending model_id rather than as an opaque vllm argparse error.
+    _VALID_ENUMS = {
+        "tokenizer_mode": {"auto", "mistral", "slow", "custom"},
+        "config_format": {"auto", "mistral", "hf"},
+        "load_format": {
+            "auto", "mistral", "safetensors", "npcache", "dummy",
+            "tensorizer", "runai_streamer", "sharded_state", "gguf",
+            "bitsandbytes", "pt",
+        },
+    }
+    for _f, _valid in _VALID_ENUMS.items():
+        _v = config.get(_f)
+        if _v and _v not in _valid:
+            raise ValueError(
+                f"models.py {model_id!r}: {_f}={_v!r} not in {sorted(_valid)}"
+            )
+
     # Static Config
     valid_tps = config.get("valid_tp", [1])
     max_tp = max(valid_tps) if valid_tps else 1
-    
+
     # Defaults
     current_tp = min(gpu_count, max_tp)
-    current_seqs = 1 # Default to 1 concurrent user/request for stability
+    # Seed concurrency from the entry's max_num_seqs. Speculative-decode entries
+    # rely on this >= 4 to have a batch to amortize the draft cost.
+    current_seqs = int(config.get("max_num_seqs", 1))
     
     # Initial Lookup
     verified = get_verified_config(model_id, current_tp, current_seqs)
@@ -165,6 +185,17 @@ def configure_and_launch(model_idx, gpu_count):
     use_eager = config.get("enforce_eager", False) # Default to model config, usually False
     attn_backends = ["Triton", "ROCm (CK)", "AITER"]
     current_attn_backend = "Triton" # Default to Triton
+
+    # Per-model attention backend override.
+    _attn_alias = {"TRITON_ATTN": "Triton", "ROCM_ATTN": "ROCm (CK)", "AITER": "AITER"}
+    _attn_override = config.get("attention_backend")
+    if _attn_override:
+        if _attn_override not in _attn_alias:
+            raise ValueError(
+                f"models.py {model_id!r}: attention_backend={_attn_override!r} "
+                f"not in {list(_attn_alias)}"
+            )
+        current_attn_backend = _attn_alias[_attn_override]
     
     name = model_id.split("/")[-1]
     
@@ -285,9 +316,27 @@ def configure_and_launch(model_idx, gpu_count):
         "--gpu-memory-utilization", str(current_util),
         "--dtype", "auto"
     ]
-    
+
     if config.get("trust_remote"): cmd.append("--trust-remote-code")
     if use_eager: cmd.append("--enforce-eager")
+
+    # Optional structured fields. .get() keeps existing entries unaffected.
+    if (q := config.get("quantization")):
+        cmd.extend(["--quantization", q])
+    if (n := config.get("served_model_name")):
+        cmd.extend(["--served-model-name", n])
+    if (tm := config.get("tokenizer_mode")):
+        cmd.extend(["--tokenizer-mode", tm])
+    if (cf := config.get("config_format")):
+        cmd.extend(["--config-format", cf])
+    if (lf := config.get("load_format")):
+        cmd.extend(["--load-format", lf])
+    if (ho := config.get("hf_overrides")):
+        cmd.extend(["--hf-overrides", json.dumps(ho)])
+    if (sc := config.get("speculative_config")):
+        cmd.extend(["--speculative-config", json.dumps(sc)])
+    if (ea := config.get("extra_args")):
+        cmd.extend([str(a) for a in ea])
     
     # Env Vars
     env = os.environ.copy()
@@ -348,7 +397,7 @@ def main():
             menu_items.extend([str(i), name])
             
         choice = run_dialog([
-            "--clear", "--backtitle", f"AMD R9700 vLLM Launcher (GPUs: {gpu_count})",
+            "--clear", "--backtitle", f"AMD Strix Halo vLLM Launcher (GPUs: {gpu_count})",
             "--title", "Select Model",
             "--menu", "Choose a model to serve:", "20", "60", "10"
         ] + menu_items)

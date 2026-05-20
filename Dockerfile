@@ -114,6 +114,14 @@ RUN export HIP_DEVICE_LIB_PATH=$(find /opt/rocm -type d -name bitcode -print -qu
 
 RUN python -m pip install ray
 
+# Audio extras for omni-modal models (Nemotron-Omni, Qwen3-Omni, Voxtral,
+# Ultravox, ...). librosa is installed --no-deps to skip numba/llvmlite,
+# which collides with ROCm libLLVM (same workaround as the voice-toolbox).
+RUN python -m pip install --no-cache-dir \
+      av soundfile audioread pooch lazy_loader msgpack cffi decorator \
+    && python -m pip install --no-cache-dir --no-deps librosa \
+    && rm -rf /root/.cache/pip
+
 # --- bitsandbytes (ROCm) ---
 WORKDIR /opt
 RUN git clone -b rocm_enabled_multi_backend https://github.com/ROCm/bitsandbytes.git

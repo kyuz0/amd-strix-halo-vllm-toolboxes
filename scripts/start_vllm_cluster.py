@@ -299,17 +299,33 @@ def configure_and_launch_vllm(model_idx, head_ip):
 
     cmd.extend(["--mm-encoder-attn-backend", "TRITON_ATTN"])
 
-    if "Qwen3" in model_id:
-        cmd.extend(["--reasoning-parser", "qwen3"])
-            
     if str(current_seqs) != "auto":
         cmd.extend(["--max-num-seqs", str(current_seqs)])
-        
+
     if str(current_ctx) != "auto":
         cmd.extend(["--max-model-len", str(current_ctx)])
-    
+
     if trust_remote: cmd.append("--trust-remote-code")
     if use_eager: cmd.append("--enforce-eager")
+
+    # Optional structured fields (mirror of start_vllm.py).
+    config = MODEL_TABLE[model_id]
+    if (q := config.get("quantization")):
+        cmd.extend(["--quantization", q])
+    if (n := config.get("served_model_name")):
+        cmd.extend(["--served-model-name", n])
+    if (tm := config.get("tokenizer_mode")):
+        cmd.extend(["--tokenizer-mode", tm])
+    if (cf := config.get("config_format")):
+        cmd.extend(["--config-format", cf])
+    if (lf := config.get("load_format")):
+        cmd.extend(["--load-format", lf])
+    if (ho := config.get("hf_overrides")):
+        cmd.extend(["--hf-overrides", json.dumps(ho)])
+    if (sc := config.get("speculative_config")):
+        cmd.extend(["--speculative-config", json.dumps(sc)])
+    if (ea := config.get("extra_args")):
+        cmd.extend([str(a) for a in ea])
     
     print("\n" + "="*60)
     print(f" Launching VLLM Cluster on Head: {head_ip}")
