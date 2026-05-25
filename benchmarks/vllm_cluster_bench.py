@@ -178,8 +178,9 @@ def get_model_args(model, overrides=None):
     ]
     
     # Optional ctx
-    if "ctx" in overrides:
-        cmd.extend(["--max-model-len", str(overrides.get("ctx"))])
+    ctx_override = overrides.get("ctx", config.get("ctx"))
+    if ctx_override:
+        cmd.extend(["--max-model-len", str(ctx_override)])
         
     if config.get("trust_remote"): cmd.append("--trust-remote-code")
     
