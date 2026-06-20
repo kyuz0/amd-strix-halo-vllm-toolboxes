@@ -58,7 +58,7 @@ View full benchmarks at: [https://kyuz0.github.io/amd-strix-halo-vllm-toolboxes/
 | [`cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit`](https://huggingface.co/cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit) | 122B / AWQ 4-bit | 1 GPU (TP=1, 2) |
 | [`cyankiwi/Qwen3.5-122B-A10B-AWQ-8bit`](https://huggingface.co/cyankiwi/Qwen3.5-122B-A10B-AWQ-8bit) | 122B / AWQ 8-bit | **2 GPUs (TP=2 Only)** |
 | [`cyankiwi/MiniMax-M2.7-AWQ-4bit`](https://huggingface.co/cyankiwi/MiniMax-M2.7-AWQ-4bit) | N/A / AWQ 4-bit | **2 GPUs (TP=2 Only)** |
-| [`ayysasha/MiniMax-M2.7-AWQ-G32-STRIX-2H`](https://huggingface.co/ayysasha/MiniMax-M2.7-AWQ-G32-STRIX-2H) | N/A / AWQ 4-bit | **2 GPUs (TP=2 Only)** |
+| [`ayysasha/MiniMax-M2.7-AWQ-G32-STRIX-2H`](https://huggingface.co/ayysasha/MiniMax-M2.7-AWQ-G32-STRIX-2H) | N/A / Mixed BF16+INT4 AWQ | **2 GPUs (TP=2 Only)** |
 
 
 ---
