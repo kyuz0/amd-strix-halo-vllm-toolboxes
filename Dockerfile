@@ -40,9 +40,12 @@ WORKDIR /opt
 COPY scripts/patch_aiter_headers.py /opt/patch_aiter_headers.py
 RUN python -m pip install --upgrade cmake ninja packaging wheel numpy "setuptools-scm>=8" "setuptools<80.0.0" scikit-build-core pybind11 numba scipy
 
+# AWQ support: conch-triton-kernels for AWQMarlin-on-ROCm (PR #36505).
+RUN python -m pip install conch-triton-kernels==1.3
 
 # Flash-Attention & AITER
-ENV FLASH_ATTENTION_TRITON_AMD_ENABLE="TRUE"
+ENV FLASH_ATTENTION_TRITON_AMD_ENABLE="TRUE" \
+    VLLM_USE_TRITON_AWQ=1
 ENV LD_LIBRARY_PATH="/opt/rocm/lib:/opt/rocm/lib64:$LD_LIBRARY_PATH"
 
 RUN git clone https://github.com/ROCm/flash-attention.git && \
@@ -77,14 +80,13 @@ RUN lib_sp=/opt/venv/lib/python3.12/site-packages; \
   fi
 
 # 6. Clone vLLM
-# Optional: pin to a specific vLLM commit for reproducible builds.
-# Defaults to empty (tracks upstream HEAD). Override with --build-arg VLLM_COMMIT=<sha>.
+# Track HEAD for latest fixes. Override with --build-arg VLLM_COMMIT=<sha>.
 ARG VLLM_COMMIT=
 RUN git clone https://github.com/vllm-project/vllm.git /opt/vllm
 WORKDIR /opt/vllm
 RUN if [ -n "$VLLM_COMMIT" ]; then \
   echo "Pinning vLLM to commit $VLLM_COMMIT" && git checkout "$VLLM_COMMIT"; \
-  fi
+  else echo "Tracking vLLM HEAD: $(git rev-parse --short HEAD)"; fi
 
 # --- PATCHING ---
 COPY scripts/patch_strix.py /opt/vllm/patch_strix.py
@@ -140,23 +142,18 @@ RUN export HIP_DEVICE_LIB_PATH=$(find /opt/rocm -type d -name bitcode -print -qu
 
 RUN python -m pip install ray
 
-# --- bitsandbytes (ROCm) ---
+# --- bitsandbytes ---
+# Official bitsandbytes repo (bitsandbytes-foundation) with proper gfx1151 support.
 WORKDIR /opt
-RUN git clone -b rocm_enabled_multi_backend https://github.com/ROCm/bitsandbytes.git
+RUN git clone https://github.com/bitsandbytes-foundation/bitsandbytes.git /opt/bitsandbytes
 WORKDIR /opt/bitsandbytes
-
-# Explicitly set HIP_PLATFORM (Docker ENV, not /etc/profile)
-ENV HIP_PLATFORM="amd"
-ENV CMAKE_PREFIX_PATH="/opt/rocm"
-
-# Force CMake to use the System ROCm Compiler (/opt/rocm/llvm/bin/clang++)
 RUN cmake -S . \
-  -DGPU_TARGETS="gfx1151" \
-  -DBNB_ROCM_ARCH="gfx1151" \
-  -DCOMPUTE_BACKEND=hip \
-  -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
-  -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/clang++ \
-  && \
+    -DCOMPUTE_BACKEND=hip \
+    -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
+    -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/clang++ \
+    -DBNB_ROCM_ARCH="gfx1151" \
+    -DGPU_TARGETS="gfx1151" \
+    && \
   make -j$(nproc) && \
   python -m pip install --no-cache-dir . --no-build-isolation --no-deps && \
   (find /opt/venv -type f -name "*.so" -exec strip -s {} + 2>/dev/null || true) && \

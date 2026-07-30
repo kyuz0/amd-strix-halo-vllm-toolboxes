@@ -38,14 +38,29 @@ def patch_vllm():
         p_init.write_text(txt)
         print(" -> Patched vllm/platforms/__init__.py (amdsmi disabled, is_rocm forced True)")
 
-    # Patch 1.5: vllm/platforms/rocm.py (MagicMock amdsmi + force gfx1151)
-    # Prepend MagicMock so any remaining amdsmi references in rocm.py silently succeed.
+    # Patch 1.5: vllm/platforms/rocm.py (amdsmi mock + force gfx1151)
+    # Replace real amdsmi with a minimal mock that returns proper values for
+    # the specific functions vLLM calls, so device memory queries fall through
+    # to the torch.cuda fallback instead of returning a MagicMock.
     p_rocm_plat = Path('vllm/platforms/rocm.py')
     if p_rocm_plat.exists():
         txt = p_rocm_plat.read_text()
-        # Add MagicMock header if not already present
-        if 'sys.modules["amdsmi"] = MagicMock()' not in txt:
-            header = 'import sys\nfrom unittest.mock import MagicMock\nsys.modules["amdsmi"] = MagicMock()\n'
+        # Add amdsmi mock header if not already present
+        if 'sys.modules["amdsmi"] = _AmdsmiMock()' not in txt:
+            header = (
+                'import sys\n'
+                'from unittest.mock import MagicMock\n'
+                'class _AmdsmiMock:\n'
+                '    def amdsmi_get_processor_handles(self):\n'
+                '        raise RuntimeError("amdsmi not available on Strix Halo")\n'
+                '    def amdsmi_get_gpu_memory_total(self, handle, mem_type):\n'
+                '        raise RuntimeError("amdsmi not available on Strix Halo")\n'
+                '    def amdsmi_get_gpu_gcn_arch(self, handle):\n'
+                '        return "gfx1151"\n'
+                '    def __getattr__(self, name):\n'
+                '        return MagicMock()\n'
+                'sys.modules["amdsmi"] = _AmdsmiMock()\n'
+            )
             txt = header + txt
         # Force arch detection
         if 'def _get_gcn_arch() -> str:\n    return "gfx1151"' not in txt:
@@ -53,7 +68,7 @@ def patch_vllm():
             txt = re.sub(r'device_type = .*', 'device_type = "rocm"', txt)
             txt = re.sub(r'device_name = .*', 'device_name = "gfx1151"', txt)
         p_rocm_plat.write_text(txt)
-        print(" -> Patched vllm/platforms/rocm.py (MagicMock amdsmi + forced gfx1151)")
+        print(" -> Patched vllm/platforms/rocm.py (_AmdsmiMock + forced gfx1151)")
 
     # Patch 2: _aiter_ops.py (Enable AITER on gfx1x, disable FP8 linear)
     p_aiter = Path('vllm/_aiter_ops.py')
