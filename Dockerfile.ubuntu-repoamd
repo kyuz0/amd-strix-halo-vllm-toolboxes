@@ -9,7 +9,7 @@
 #
 # Vision: gfx1151 vLLM would fall back to Torch SDPA for the ViT encoder (OOMs at 256 GiB),
 # so we build ROCm flash-attention + aiter Triton kernels and enable them
-# (FLASH_ATTENTION_TRITON_AMD_ENABLE + PR #40289 detection patch). aiter's C++ JIT module is
+# (FLASH_ATTENTION_TRITON_AMD_ENABLE). aiter's C++ JIT module is
 # pre-warmed at build so the dev SDK can be dropped while vision still works at runtime.
 #
 # BASE = 24.04 / py3.12: 26.04 ships py3.14 but vLLM's amd-quark dep has no py3.14 wheel yet.
@@ -108,35 +108,6 @@ RUN ROOT=$(rocm-sdk path --root) && \
     python -m pip install /tmp/dist/*.whl && rm -rf /tmp/dist
 RUN python -m pip install ray
 
-# #40289 (required): this flash-attn build ships the Triton-AMD kernels at the aiter
-# location, so make flash_attn_triton_available() detect them there (else ViT -> SDPA OOM).
-# Target the INSTALLED venv copy via sysconfig purelib — NOT find_spec("vllm"), which at this
-# WORKDIR (/opt/vllm) resolves to the source tree that gets rm -rf'd, leaving the shipped
-# copy unpatched (cost us a broken CI image).
-RUN python - <<'PY'
-import os, sysconfig
-p = os.path.join(sysconfig.get_paths()["purelib"], "vllm", "platforms", "rocm.py")
-assert os.path.exists(p), f"installed vllm rocm.py not found at {p}"
-s = open(p).read()
-old = '''        if find_spec("flash_attn") is None:
-            return False
-        if find_spec("flash_attn.flash_attn_triton_amd") is None:
-            return False'''
-new = '''        def _has(n):
-            try:
-                return find_spec(n) is not None
-            except (ImportError, ValueError):
-                return False
-        if not (_has("flash_attn.flash_attn_triton_amd")
-                or _has("aiter.ops.triton._triton_kernels.flash_attn_triton_amd")):
-            return False'''
-if old in s:
-    open(p,"w").write(s.replace(old,new,1)); print("patched rocm.py ViT detection (#40289)")
-elif "aiter.ops.triton._triton_kernels.flash_attn_triton_amd" in s:
-    print("rocm.py already detects the aiter location; no patch needed")
-else:
-    raise SystemExit("ERROR: rocm.py flash_attn_triton_available anchor not found")
-PY
 
 # --- SLIM: pre-warm aiter's C++ JIT (module_aiter_enum) while hipcc is present, then drop
 #     the 12 GB dev SDK. Vision still works at runtime (JIT cached; git in runtime image).
@@ -184,12 +155,13 @@ RUN groupadd -f -g 105 render \
 
 COPY --from=builder /opt/venv /opt/venv
 
-# Fail-fast: the ViT flash-attn detection MUST reference the aiter kernel location (#40289),
-# else vision silently falls back to Torch SDPA and OOMs. Guards against a stale buildcache
-# layer shipping an unpatched rocm.py (this cost us a broken CI image once).
+# Fail-fast: the ViT flash-attn detection MUST reference the aiter kernel location, else
+# vision silently falls back to Torch SDPA and OOMs. Also guards against a stale buildcache
+# layer (this cost us a broken CI image once).
 RUN grep -q "aiter.ops.triton._triton_kernels.flash_attn_triton_amd" \
       /opt/venv/lib/python3.12/site-packages/vllm/platforms/rocm.py \
-    || { echo "ERROR: rocm.py ViT flash-attn detection is NOT patched for aiter (#40289)"; exit 1; }
+    || { echo "ERROR: vllm/platforms/rocm.py does not detect the aiter ViT kernels."; \
+         echo "       Requires vLLM > v0.26.0."; exit 1; }
 
 # Triton kernel cache lives here (TRITON_CACHE_DIR below). On FIRST serve of a model, Triton
 # autotunes the GDN + ViT flash-attn kernels on the live GPU (a few minutes) and writes them
