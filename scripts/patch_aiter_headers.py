@@ -559,6 +559,74 @@ __device__ constexpr T block_reduce(T local, F reduce_op)
 
 def patch_headers():
     sp = site.getsitepackages()[0]
+    utils_path = os.path.join(sp, 'aiter_meta', 'csrc', 'cpp_itfs', 'utils.py')
+    if os.path.exists(utils_path):
+        with open(utils_path) as f:
+            utils_text = f.read()
+
+        old_arch_probe = '''DEFAULT_GPU_ARCH = (
+    subprocess.run(
+        "/opt/rocm/llvm/bin/amdgpu-arch", shell=True, capture_output=True, text=True
+    )
+    .stdout.strip()
+    .split("\\n")[0]
+)'''
+        new_arch_probe = '''def _rocm_executable(name):
+    executable = shutil.which(name)
+    if executable:
+        return executable
+    rocm_path = os.environ.get("ROCM_PATH", "/opt/rocm")
+    for relative_path in (f"bin/{name}", f"lib/llvm/bin/{name}", f"llvm/bin/{name}"):
+        candidate = os.path.join(rocm_path, relative_path)
+        if os.path.isfile(candidate):
+            return candidate
+    raise RuntimeError(f"Could not find ROCm executable: {name}")
+
+
+DEFAULT_GPU_ARCH = subprocess.run(
+    [_rocm_executable("amdgpu-arch")], check=True, capture_output=True, text=True
+).stdout.strip().split("\\n")[0]'''
+
+        old_version_probe = '''def get_hip_version():
+    version = subprocess.run(
+        "/opt/rocm/bin/hipconfig --version", shell=True, capture_output=True, text=True
+    )
+    return parse(version.stdout.split()[-1].rstrip("-").replace("-", "+"))'''
+        new_version_probe = '''def get_hip_version():
+    version = subprocess.run(
+        [_rocm_executable("hipconfig"), "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return parse(version.stdout.split()[-1].rstrip("-").replace("-", "+"))'''
+
+        old_arch_list = '''        "gfx942",
+        "gfx950",
+    ]'''
+        new_arch_list = '''        "gfx942",
+        "gfx950",
+        "gfx1151",
+    ]'''
+
+        replacements = (
+            (old_arch_probe, new_arch_probe, 'pip ROCm architecture probe'),
+            (old_version_probe, new_version_probe, 'pip ROCm version probe'),
+            (old_arch_list, new_arch_list, 'gfx1151 runtime JIT allow-list'),
+        )
+        for old, new, description in replacements:
+            if new in utils_text:
+                continue
+            if old not in utils_text:
+                raise RuntimeError(
+                    f"Unsupported AITER cpp_itfs/utils.py layout: {description} anchor missing"
+                )
+            utils_text = utils_text.replace(old, new, 1)
+
+        with open(utils_path, 'w') as f:
+            f.write(utils_text)
+        print(f"Patched {utils_path} for pip ROCm gfx1151 runtime JIT")
+
     inc_dir = os.path.join(sp, 'aiter_meta', 'csrc', 'include')
     if not os.path.isdir(inc_dir):
         print(f"Directory {inc_dir} not found. AITER might not be installed.")

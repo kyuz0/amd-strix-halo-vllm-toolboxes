@@ -109,8 +109,9 @@ RUN ROOT=$(rocm-sdk path --root) && \
 RUN python -m pip install ray
 
 
-# --- SLIM: pre-warm aiter's C++ JIT (module_aiter_enum) while hipcc is present, then drop
-#     the 12 GB dev SDK. Vision still works at runtime (JIT cached; git in runtime image).
+# --- SLIM: pre-warm aiter's common C++ JIT module, then drop the 12 GB aggregate dev SDK.
+#     rocm-sdk-core still provides hipcc, HIP headers, and device libraries needed by AITER's
+#     shape-specific attention kernels at runtime; the runtime stage adds the host C++ tools.
 #     amdsmi resolves libamd_smi.so via _rocm_sdk_core (unversioned symlink + runtime ROCM_PATH).
 RUN ROOT=$(rocm-sdk path --root) && \
     export ROCM_PATH=$ROOT HIP_PATH=$ROOT \
@@ -133,11 +134,11 @@ LABEL com.github.containers.toolbox="true" \
       usage="This image is meant to be used with the toolbox command" \
       summary="Ubuntu stable-ROCm vLLM toolbox for gfx1151"
 
-# gcc + python3.12-dev: Triton JIT-compiles a host driver module on first kernel use.
+# gcc/g++/make + python3.12-dev: Triton and AITER JIT-compile runtime kernels.
 # git: aiter/flash_attn call git for version detection at import.
 # sudo: toolbx/distrobox run their in-container user setup through it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3.12 python3.12-dev gcc git ca-certificates curl sudo libcap2-bin libnss-myhostname \
+      python3.12 python3.12-dev gcc g++ make git ca-certificates curl sudo libcap2-bin libnss-myhostname \
       libatomic1 libnuma1 libgomp1 libelf1 libdrm2 libdrm-amdgpu1 libtinfo6 zlib1g libssl3 \
       libgoogle-perftools4 libibverbs1 librdmacm1 dialog openssh-client iproute2 procps \
       numactl ibverbs-utils rdma-core perftest infiniband-diags iputils-ping iperf3 pciutils rsync \
@@ -169,8 +170,11 @@ RUN (userdel -r ubuntu 2>/dev/null || true) \
       getent passwd 1000 >&2; \
       exit 1; \
     fi \
+ && install -d -m 1777 /opt/triton_cache \
  && useradd --uid 1000 --no-create-home toolbox-build-test \
  && test "$(id -u toolbox-build-test)" = "1000" \
+ && su -s /bin/sh toolbox-build-test -c 'touch /opt/triton_cache/.toolbox-write-test' \
+ && rm /opt/triton_cache/.toolbox-write-test \
  && userdel toolbox-build-test \
  && rm -f /etc/machine-id && touch /etc/machine-id \
  && sed -i 's/^hosts:.*/& myhostname/' /etc/nsswitch.conf \
@@ -225,7 +229,8 @@ RUN grep -q "aiter.ops.triton._triton_kernels.flash_attn_triton_amd" \
 # it would go stale and silently miss. Instead, mount a persistent host dir here to keep the
 # cache across container restarts and image bumps, e.g.:
 #     -v "$HOME/.cache/triton-gfx1151:/opt/triton_cache"
-RUN mkdir -p /opt/triton_cache
+# Without a mount, mode 1777 lets Toolbx's dynamically created host user write the shared cache;
+# the build-time user test above verifies this with the normal host UID 1000.
 
 # ROCM_PATH/LD_LIBRARY_PATH → pip rocm-sdk (core + gfx1151 libraries); amdsmi resolves
 # libamd_smi.so via $ROCM_PATH/lib (builder added the unversioned symlink in core).
@@ -233,8 +238,10 @@ RUN mkdir -p /opt/triton_cache
 ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH PYTHONNOUSERSITE=1 \
     TOOLBOX_ROCM_SOURCE="repo.amd.com stable wheels" \
     ROCM_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core \
+    HIP_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core \
+    HIP_DEVICE_LIB_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib/llvm/amdgcn/bitcode \
     LD_LIBRARY_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib:/opt/venv/lib/python3.12/site-packages/_rocm_sdk_libraries/lib \
-    PYTORCH_ROCM_ARCH=gfx1151 ROCBLAS_USE_HIPBLASLT=1 FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE \
+    PYTORCH_ROCM_ARCH=gfx1151 GPU_ARCHS=gfx1151 ROCBLAS_USE_HIPBLASLT=1 FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE \
     HIP_FORCE_DEV_KERNARG=1 VLLM_USE_TRITON_AWQ=1 MIOPEN_FIND_MODE=FAST \
     TRITON_CACHE_DIR=/opt/triton_cache
 
@@ -242,9 +249,19 @@ ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH PYTHONNOUSERSITE=1 \
 # and their immediate runtime dependencies. This intentionally runs before publishing.
 RUN for command_name in \
       start-vllm start-vllm-cluster run-vllm-bench vllm-cluster-bench find-max-context \
-      vllm ray dialog ssh ip pgrep rocm-smi rdma ibv_devices perfquery ping iperf3 lspci; do \
+      vllm ray dialog ssh ip pgrep rocm-smi rdma ibv_devices perfquery ping iperf3 lspci \
+      hipcc hipconfig g++ make; do \
       command -v "$command_name" >/dev/null || { echo "ERROR: missing runtime command: $command_name" >&2; exit 1; }; \
     done \
+ && test -x "$ROCM_PATH/lib/llvm/bin/amdgpu-arch" \
+ && test -d "$HIP_DEVICE_LIB_PATH" \
+ && hipconfig --version \
+ && hipcc --offload-arch=gfx1151 -x hip -c /dev/null -o /tmp/hipcc-smoke.o \
+ && rm -f /tmp/hipcc-smoke.o \
+ && grep -q '_rocm_executable("hipconfig")' \
+      /opt/venv/lib/python3.12/site-packages/aiter_meta/csrc/cpp_itfs/utils.py \
+ && grep -q '"gfx1151"' \
+      /opt/venv/lib/python3.12/site-packages/aiter_meta/csrc/cpp_itfs/utils.py \
  && python -m py_compile \
       /opt/start-vllm /opt/start-vllm-cluster /opt/cluster_manager.py /opt/models.py \
       /opt/bench_utils.py /opt/run_vllm_bench.py /opt/vllm_cluster_bench.py /opt/find_max_context.py \
