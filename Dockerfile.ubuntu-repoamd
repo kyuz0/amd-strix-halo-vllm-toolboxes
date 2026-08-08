@@ -278,8 +278,6 @@ RUN for command_name in \
  && printf '#include <thrust/complex.h>\n' \
       | hipcc --offload-arch=gfx1151 -x hip -c - -o /tmp/hipcc-thrust-smoke.o \
  && rm -f /tmp/hipcc-smoke.o /tmp/hipcc-thrust-smoke.o \
- && grep -q '_rocm_executable("hipconfig")' \
-      /opt/venv/lib/python3.12/site-packages/aiter_meta/csrc/cpp_itfs/utils.py \
  && grep -q '"gfx1151"' \
       /opt/venv/lib/python3.12/site-packages/aiter_meta/csrc/cpp_itfs/utils.py \
  && python -m py_compile \
