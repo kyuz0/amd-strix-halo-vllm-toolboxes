@@ -72,7 +72,8 @@ RUN set -e; ROOT=$(rocm-sdk path --root); \
       HIP_DEVICE_LIB_PATH=$ROOT/lib/llvm/amdgcn/bitcode \
       CMAKE_PREFIX_PATH=$ROOT/lib/cmake:$ROOT \
       LD_LIBRARY_PATH=$ROOT/lib:$ROOT/lib/llvm/lib \
-      PYTORCH_ROCM_ARCH=gfx1151 GPU_ARCHS=gfx1151 AMDGPU_TARGETS=gfx1151; \
+      PYTORCH_ROCM_ARCH=gfx1151 GPU_ARCHS=gfx1151 AMDGPU_TARGETS=gfx1151 \
+      AITER_USE_SYSTEM_TRITON=1; \
     cd /opt && git clone https://github.com/ROCm/flash-attention.git && \
     cd flash-attention && git checkout main_perf && \
     git submodule update --init third_party/aiter && \
