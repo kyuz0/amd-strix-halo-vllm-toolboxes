@@ -81,7 +81,7 @@ RUN set -e; ROOT=$(rocm-sdk path --root); \
     git submodule update --init 3rdparty/composable_kernel && \
     export CK_DIR="$(pwd)/3rdparty/composable_kernel" && \
     python -m pip wheel --no-build-isolation --no-deps -w /tmp/aiter_dist -v . && \
-    python -m pip install --force-reinstall /tmp/aiter_dist/amd_aiter*.whl && \
+    python -m pip install --force-reinstall --no-deps /tmp/aiter_dist/amd_aiter*.whl && \
     python /opt/patch_aiter_headers.py && \
     cd /opt/flash-attention && \
     python -c "import re; f=open('setup.py'); t=f.read(); f.close(); t=re.sub(r'subprocess\.run\([\s\S]*?third_party/aiter[\s\S]*?check=True,\s*\)', 'pass # patched', t); open('setup.py','w').write(t)" && \
