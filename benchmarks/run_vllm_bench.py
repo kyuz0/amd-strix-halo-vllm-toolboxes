@@ -164,8 +164,6 @@ def run_throughput(model, tp_size, backend_name="Default", output_dir=RESULTS_DI
     else:
         cmd.extend(["--attention-backend", "TRITON_ATTN"])
 
-    cmd.extend(["--mm-encoder-attn-backend", "TRITON_ATTN"])
-
     # ENV Setup: Global + Model Specific
     env = os.environ.copy()
     env.pop("VLLM_ROCM_USE_AITER", None)

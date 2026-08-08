@@ -97,7 +97,6 @@ MODEL_TABLE = {
         "trust_remote": True,
         "valid_tp": [1], 
         "enforce_eager": True, 
-        "env": {"VLLM_USE_TRITON_AWQ": "1"},
         "max_num_seqs": "64",
         "max_tokens": "16384",
         "extra_flags": [
@@ -111,7 +110,6 @@ MODEL_TABLE = {
         "trust_remote": True,
         "valid_tp": [1,2], # Too big for single GPU
         "enforce_eager": True, 
-        "env": {"VLLM_USE_TRITON_AWQ": "1"},
         "max_num_seqs": "64",
         "max_tokens": "16384",
         "extra_flags": [
@@ -125,7 +123,6 @@ MODEL_TABLE = {
         "trust_remote": True,
         "valid_tp": [2], # Too big for single GPU
         "enforce_eager": True, 
-        "env": {"VLLM_USE_TRITON_AWQ": "1"},
         "max_num_seqs": "64",
         "max_tokens": "16384",
         "extra_flags": [
@@ -139,7 +136,6 @@ MODEL_TABLE = {
         "trust_remote": True,
         "valid_tp": [2],
         "enforce_eager": True,
-        "env": {"VLLM_USE_TRITON_AWQ": "1"},
         "max_num_seqs": "64",
         "max_tokens": "16384",
         "extra_flags": [
@@ -153,7 +149,6 @@ MODEL_TABLE = {
         "trust_remote": True,
         "valid_tp": [2],
         "enforce_eager": True,
-        "env": {"VLLM_USE_TRITON_AWQ": "1"},
         "ctx": "131072",
         "max_num_seqs": "64",
         "max_tokens": "16384",

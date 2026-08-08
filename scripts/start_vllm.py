@@ -136,18 +136,32 @@ def run_dialog(args):
         except subprocess.CalledProcessError:
             return None # User cancelled
 
-def nuke_vllm_cache():
-    """Removes vLLM cache directory to fix potential graph/incompatibility issues."""
-    cache = Path.home() / ".cache" / "vllm"
-    if cache.exists():
+def reset_compiled_caches():
+    """Clear vLLM, Triton, and AITER compiled caches for a cold rebuild."""
+    caches = [
+        ("vLLM", Path.home() / ".cache" / "vllm"),
+        ("Triton", Path("/opt/triton_cache")),
+        ("AITER", Path.home() / ".aiter"),
+    ]
+
+    for label, cache in caches:
+        if not cache.exists():
+            print(f"{label} cache not present at {cache}; skipping.")
+            continue
+
         try:
-            print(f"Clearing vLLM cache at {cache}...", end="", flush=True)
-            subprocess.run(["rm", "-rf", str(cache)], check=True)
-            cache.mkdir(parents=True, exist_ok=True)
+            print(f"Clearing {label} cache at {cache}...", end="", flush=True)
+            # Keep the cache root itself: /opt/triton_cache may be a mount point.
+            for entry in cache.iterdir():
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
             print(" Done.")
-            time.sleep(1)
         except Exception as e:
             print(f" Failed: {e}")
+
+    time.sleep(1)
 
 def configure_and_launch(model_idx, gpu_count):
     model_id = MODELS_TO_RUN[model_idx]
@@ -166,7 +180,7 @@ def configure_and_launch(model_idx, gpu_count):
     current_ctx = verified["ctx"]
     current_util = verified["util"]
     
-    clear_cache = True  # Default ON: stale graphs from version upgrades cause crashes
+    clear_cache = False  # Keep compiled kernels on normal launches; reset only when needed
     use_eager = config.get("enforce_eager", False) # Default to model config, usually False
     attn_backends = ["Triton", "ROCm (CK)", "AITER"]
     current_attn_backend = "Triton" # Default to Triton
@@ -191,7 +205,7 @@ def configure_and_launch(model_idx, gpu_count):
             "3", f"Context Length:       {current_ctx} (Verified)",
             "4", f"GPU Utilization:      {current_util} (Verified)",
             "5", f"Attention Backend:    {current_attn_backend}",
-            "6", f"Erase vLLM Cache:     {cache_status}",
+            "6", f"Reset Compiled Caches:{cache_status:>5}",
             "7", f"Force Eager Mode:     {eager_status}",
             "8", f"Extra vLLM Flags:     {extra_flags_short}",
             "9", "LAUNCH SERVER"
@@ -254,15 +268,19 @@ def configure_and_launch(model_idx, gpu_count):
             if not clear_cache:
                 # Enabling it -> Show Warning
                 warn_msg = (
-                    "WARNING: Erasing the vLLM cache will remove the compiled compute graphs.\n\n"
-                    "This is useful if you are experiencing crashes, 'invalid graph' errors,\n"
-                    "or have switched vLLM versions recently.\n\n"
-                    "However, the next startup will take longer as graphs are re-compiled.\n\n"
-                    "Are you sure you want to enable this?"
+                    "This performs a cold rebuild by clearing:\n\n"
+                    "~/.cache/vllm - vLLM/torch.compile graphs\n"
+                    "  Reset after vLLM/PyTorch changes or graph/compile errors.\n\n"
+                    "/opt/triton_cache - Triton kernels and autotuning results\n"
+                    "  Reset after Triton/PyTorch/ROCm/backend changes or kernel errors.\n\n"
+                    "~/.aiter - AITER JIT kernels\n"
+                    "  Reset after AITER/ROCm/backend changes or AITER JIT errors.\n\n"
+                    "Keep this disabled for normal launches: rebuilding can take minutes.\n\n"
+                    "Reset all compiled caches on the next launch?"
                 )
                 confirm = run_dialog([
-                    "--title", "Erase Cache Warning", 
-                    "--yesno", warn_msg, "12", "60"
+                    "--title", "Reset Compiled Caches",
+                    "--yesno", warn_msg, "21", "76"
                 ])
                 
                 # If confirm is not None (exit 0), it is YES.
@@ -297,7 +315,7 @@ def configure_and_launch(model_idx, gpu_count):
     subprocess.run(["clear"])
     
     if clear_cache:
-        nuke_vllm_cache()
+        reset_compiled_caches()
     
     cmd = [
         "vllm", "serve", model_id,
@@ -332,19 +350,12 @@ def configure_and_launch(model_idx, gpu_count):
 
     env.update(config.get("env", {}))
 
-    # ViT attention on gfx1151: the default falls to TORCH_SDPA (flash_attn's
-    # Triton-AMD subpackage isn't available) which produces NaN/Inf embeddings
-    # and collapses the LM into an endless '!' stream. TRITON_ATTN uses vLLM's
-    # own Triton ViT wrapper and is numerically healthy. No-op for LM-only.
-    cmd.extend(["--mm-encoder-attn-backend", "TRITON_ATTN"])
-
-    
     print("\n" + "="*60)
     print(f" Launching: {name}")
     print(f" Config:    TP={current_tp} | Seqs={current_seqs} | Ctx={current_ctx} | Util={current_util}")
     print(f" Backend:   {current_attn_backend}")
     if clear_cache:
-        print(f" Action:    Clearing vLLM Cache (~/.cache/vllm)")
+        print(" Action:    Resetting vLLM, Triton, and AITER compiled caches")
     if current_extra_flags:
         print(f" Extras:    {' '.join(current_extra_flags)}")
         

@@ -143,8 +143,7 @@ distrobox create -n vllm \
 distrobox enter vllm
 ```
 
-The Ubuntu / stable-ROCm image works the same way — swap the `--image` for
-`docker.io/kyuz0/vllm-rocm-gfx1151:latest`.
+The canonical `vllm-therock-gfx1151` image is built on Ubuntu with the stable ROCm stack.
 
 > **Verification:** Run `rocm-smi` to check GPU status. It should print your GPU name (e.g.
 > `Radeon 8060S Graphics`). If it reports `get_name, Failed to load a library` or no device at

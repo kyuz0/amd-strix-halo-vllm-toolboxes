@@ -83,8 +83,8 @@ cat <<'ASCII'
                                v L L M                                      
 ASCII
 echo
-printf 'AMD STRIX HALO — vLLM Toolbox (gfx1151, ROCm via TheRock)\n'
-[[ -n "$ROCM_VER" ]] && printf 'ROCm nightly: %s\n' "$ROCM_VER"
+printf 'AMD STRIX HALO — vLLM Toolbox (gfx1151, ROCm via %s)\n' "${TOOLBOX_ROCM_SOURCE:-TheRock nightly}"
+[[ -n "$ROCM_VER" ]] && printf 'ROCm: %s\n' "$ROCM_VER"
 echo
 printf 'Machine: %s\n' "$MACHINE"
 printf 'GPU    : %s\n\n' "$GPU"

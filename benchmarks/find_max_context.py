@@ -126,7 +126,6 @@ def get_vllm_server_cmd(model, tp_size, util, max_len, max_seqs, use_cluster=Fal
         "--max-num-seqs", str(max_seqs),
         "--dtype", "auto",
         "--attention-backend", "TRITON_ATTN",
-        "--mm-encoder-attn-backend", "TRITON_ATTN",
         # "--disable-log-stats" 
     ]
     
