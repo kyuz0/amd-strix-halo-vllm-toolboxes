@@ -81,6 +81,28 @@ MODEL_TABLE = {
         ]
     },
 
+    # DeepSeek V4 Flash requires AITER for its AMD attention/indexer paths, but
+    # gfx1151 cannot use AITER's FP8 linear kernels. Eager mode avoids the
+    # unsupported FP8 indexer CUDA-graph profiling path.
+    "deepseek-ai/DeepSeek-V4-Flash-0731": {
+        "trust_remote": True,
+        "valid_tp": [1],
+        "enforce_eager": True,
+        "env": {
+            "VLLM_ROCM_USE_AITER": "1",
+            "VLLM_ROCM_USE_AITER_LINEAR": "0",
+        },
+        "ctx": "262144",
+        "max_num_seqs": "1",
+        "max_tokens": "256",
+        "extra_flags": [
+            "--kv-cache-dtype", "fp8",
+            "--block-size", "256",
+            "--max-num-batched-tokens", "256",
+            "--logprobs-mode", "processed_logprobs",
+        ]
+    },
+
     "Qwen/Qwen3.6-35B-A3B": {
         "trust_remote": True,
         "valid_tp": [1],

@@ -107,6 +107,39 @@ def patch_vllm():
         p_aiter.write_text(txt)
         print(" -> Patched vllm/_aiter_ops.py (gfx1151 AITER gate, FP8 linear/MoE safety)")
 
+    # Patch 2.5: DeepSeek V4 has two private FP8 linear fast paths which check the
+    # broad AITER toggle instead of the FP8-linear capability gate. That bypasses
+    # Patch 2 on gfx1151, preshuffles the weights, and eventually calls AITER's
+    # unsupported float8_e4m3fn quantizer. Route both decisions through
+    # is_linear_fp8_enabled(); on gfx1151 Patch 2 forces that gate off, leaving
+    # AITER available for DeepSeek's attention/MHC while the linear layers use
+    # vLLM's Triton fallback.
+    dsv4_linear_gates = (
+        (
+            Path("vllm/models/deepseek_v4/amd/model.py"),
+            "self._gateup = rocm_aiter_ops.is_enabled()",
+            "self._gateup = rocm_aiter_ops.is_linear_fp8_enabled()",
+        ),
+        (
+            Path("vllm/models/deepseek_v4/amd/rocm.py"),
+            "if not rocm_aiter_ops.is_enabled():",
+            "if not rocm_aiter_ops.is_linear_fp8_enabled():",
+        ),
+    )
+    for path, old_gate, new_gate in dsv4_linear_gates:
+        if not path.exists():
+            continue
+        txt = path.read_text()
+        if new_gate not in txt:
+            if txt.count(old_gate) != 1:
+                raise RuntimeError(
+                    f"Unsupported DeepSeek V4 AITER linear gate in {path}; "
+                    "refusing to build without the gfx1151 Triton fallback"
+                )
+            txt = txt.replace(old_gate, new_gate, 1)
+            path.write_text(txt)
+        print(f" -> Patched {path} (AITER FP8 linear gate respected)")
+
     # Patch 3: rocm_aiter_fa.py (allow the explicit ROCM_AITER_FA backend on gfx1151)
     p_fa = Path('vllm/v1/attention/backends/rocm_aiter_fa.py')
     if p_fa.exists():

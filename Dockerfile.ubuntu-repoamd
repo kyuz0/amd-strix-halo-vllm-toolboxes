@@ -250,6 +250,8 @@ RUN grep -q "aiter.ops.triton._triton_kernels.flash_attn_triton_amd" \
 # exposed separately through CPLUS_INCLUDE_PATH for model-specific AITER JIT compilation.
 # amdsmi resolves its unversioned symlink from _rocm_sdk_core/lib.
 # FLASH_ATTENTION_TRITON_AMD_ENABLE enables the ViT flash-attn path. Paths deterministic.
+# Keep AITER available for supported attention/indexer operators, but disable its FP8 linear
+# path, which is unsupported on gfx1151. start-vllm applies per-model overrides.
 ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH PYTHONNOUSERSITE=1 \
     TOOLBOX_ROCM_SOURCE="repo.amd.com stable wheels" \
     ROCM_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core \
@@ -257,8 +259,10 @@ ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH PYTHONNOUSERSITE=1 \
     ROCM_DEVEL_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel \
     HIP_DEVICE_LIB_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib/llvm/amdgcn/bitcode \
     CPLUS_INCLUDE_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel/include \
+    LIBRARY_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel/lib \
     LD_LIBRARY_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib:/opt/venv/lib/python3.12/site-packages/_rocm_sdk_libraries/lib \
     PYTORCH_ROCM_ARCH=gfx1151 GPU_ARCHS=gfx1151 FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE \
+    VLLM_ROCM_USE_AITER=1 VLLM_ROCM_USE_AITER_LINEAR=0 \
     HIP_FORCE_DEV_KERNARG=1 MIOPEN_FIND_MODE=FAST \
     TRITON_CACHE_DIR=/opt/triton_cache
 
@@ -273,6 +277,7 @@ RUN for command_name in \
  && test -x "$ROCM_PATH/lib/llvm/bin/amdgpu-arch" \
  && test -d "$HIP_DEVICE_LIB_PATH" \
  && test -f "$ROCM_DEVEL_PATH/include/thrust/complex.h" \
+ && test -f "$ROCM_DEVEL_PATH/lib/libamdhip64.so" \
  && hipconfig --version \
  && hipcc --offload-arch=gfx1151 -x hip -c /dev/null -o /tmp/hipcc-smoke.o \
  && printf '#include <thrust/complex.h>\n' \
