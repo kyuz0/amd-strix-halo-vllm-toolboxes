@@ -43,6 +43,7 @@ RUN python -m pip install --upgrade pip wheel packaging "setuptools<80.0.0" "set
 ARG ROCM_WHL=https://repo.amd.com/rocm/whl-multi-arch/
 ARG TORCH_VERSION=2.11.0
 ARG ROCM_VERSION=7.14.0
+ARG AITER_REF=v0.1.19
 RUN set -e; \
     TV_MINOR=$(( $(echo "${TORCH_VERSION}" | cut -d. -f2) + 15 )); \
     TORCHVISION="0.${TV_MINOR}.0+rocm${ROCM_VERSION}"; \
@@ -75,7 +76,9 @@ RUN set -e; ROOT=$(rocm-sdk path --root); \
     cd /opt && git clone https://github.com/ROCm/flash-attention.git && \
     cd flash-attention && git checkout main_perf && \
     git submodule update --init third_party/aiter && \
-    cd third_party/aiter && git submodule update --init 3rdparty/composable_kernel && \
+    cd third_party/aiter && \
+    git fetch --tags origin && git checkout --detach "${AITER_REF}" && \
+    git submodule update --init 3rdparty/composable_kernel && \
     export CK_DIR="$(pwd)/3rdparty/composable_kernel" && \
     python -m pip wheel --no-build-isolation --no-deps -w /tmp/aiter_dist -v . && \
     python -m pip install --force-reinstall /tmp/aiter_dist/amd_aiter*.whl && \
@@ -238,16 +241,19 @@ RUN grep -q "aiter.ops.triton._triton_kernels.flash_attn_triton_amd" \
 # Without a mount, mode 1777 lets Toolbx's dynamically created host user write the shared cache;
 # the build-time user test above verifies this with the normal host UID 1000.
 
-# ROCM_PATH/HIP_PATH point at the expanded pip rocm-sdk-devel tree so runtime JIT builds see
-# the complete matched compiler headers and libraries. Keep the core and libraries paths in
-# LD_LIBRARY_PATH as well; amdsmi resolves its unversioned symlink from _rocm_sdk_core/lib.
+# Keep ROCM_PATH/HIP_PATH on rocm-sdk-core: torch and Triton use that root for runtime driver
+# discovery. The complete matched rocm-sdk-devel tree remains installed, while its headers are
+# exposed separately through CPLUS_INCLUDE_PATH for model-specific AITER JIT compilation.
+# amdsmi resolves its unversioned symlink from _rocm_sdk_core/lib.
 # FLASH_ATTENTION_TRITON_AMD_ENABLE enables the ViT flash-attn path. Paths deterministic.
 ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH PYTHONNOUSERSITE=1 \
     TOOLBOX_ROCM_SOURCE="repo.amd.com stable wheels" \
-    ROCM_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel \
-    HIP_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel \
-    HIP_DEVICE_LIB_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel/lib/llvm/amdgcn/bitcode \
-    LD_LIBRARY_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel/lib:/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib:/opt/venv/lib/python3.12/site-packages/_rocm_sdk_libraries/lib \
+    ROCM_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core \
+    HIP_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core \
+    ROCM_DEVEL_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel \
+    HIP_DEVICE_LIB_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib/llvm/amdgcn/bitcode \
+    CPLUS_INCLUDE_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel/include \
+    LD_LIBRARY_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib:/opt/venv/lib/python3.12/site-packages/_rocm_sdk_libraries/lib \
     PYTORCH_ROCM_ARCH=gfx1151 GPU_ARCHS=gfx1151 FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE \
     HIP_FORCE_DEV_KERNARG=1 MIOPEN_FIND_MODE=FAST \
     TRITON_CACHE_DIR=/opt/triton_cache
@@ -262,7 +268,7 @@ RUN for command_name in \
     done \
  && test -x "$ROCM_PATH/lib/llvm/bin/amdgpu-arch" \
  && test -d "$HIP_DEVICE_LIB_PATH" \
- && test -f "$ROCM_PATH/include/thrust/complex.h" \
+ && test -f "$ROCM_DEVEL_PATH/include/thrust/complex.h" \
  && hipconfig --version \
  && hipcc --offload-arch=gfx1151 -x hip -c /dev/null -o /tmp/hipcc-smoke.o \
  && printf '#include <thrust/complex.h>\n' \
