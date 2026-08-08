@@ -139,7 +139,8 @@ LABEL com.github.containers.toolbox="true" \
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3.12 python3.12-dev gcc git ca-certificates curl sudo libcap2-bin libnss-myhostname \
       libatomic1 libnuma1 libgomp1 libelf1 libdrm2 libdrm-amdgpu1 libtinfo6 zlib1g libssl3 \
-      libgoogle-perftools4 libibverbs1 librdmacm1 \
+      libgoogle-perftools4 libibverbs1 librdmacm1 dialog openssh-client iproute2 procps \
+      numactl ibverbs-utils rdma-core perftest infiniband-diags iputils-ping iperf3 pciutils rsync \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Container-workflow compatibility (toolbx / distrobox / plain `podman run --group-add ...`).
@@ -178,6 +179,37 @@ RUN (userdel -r ubuntu 2>/dev/null || true) \
 
 COPY --from=builder /opt/venv /opt/venv
 
+# Preserve the user-facing toolbox contract from the original image. These are repo assets,
+# not part of the vLLM wheel, so copying only /opt/venv produces an image with no start-vllm,
+# model catalogue, benchmark commands, cluster manager, or login environment.
+COPY scripts/01-rocm-env-for-triton.sh /etc/profile.d/01-rocm-env-for-triton.sh
+COPY scripts/99-toolbox-banner.sh /etc/profile.d/99-toolbox-banner.sh
+COPY scripts/zz-venv-last.sh /etc/profile.d/zz-venv-last.sh
+COPY scripts/start_vllm.py /opt/start-vllm
+COPY scripts/start_vllm_cluster.py /opt/start-vllm-cluster
+COPY scripts/measure_bandwidth.sh /opt/measure_bandwidth.sh
+COPY scripts/cluster_manager.py /opt/cluster_manager.py
+COPY scripts/models.py /opt/models.py
+COPY benchmarks/max_context_results.json /opt/max_context_results.json
+COPY benchmarks/bench_utils.py /opt/bench_utils.py
+COPY benchmarks/run_vllm_bench.py /opt/run_vllm_bench.py
+COPY benchmarks/vllm_cluster_bench.py /opt/vllm_cluster_bench.py
+COPY benchmarks/find_max_context.py /opt/find_max_context.py
+COPY rdma_cluster/compare_eth_vs_rdma.sh /opt/compare_eth_vs_rdma.sh
+COPY scripts/configure_cluster.sh /opt/configure_cluster.sh
+
+RUN chmod 0644 /etc/profile.d/*.sh /opt/max_context_results.json /opt/models.py \
+ && chmod +x /opt/start-vllm /opt/start-vllm-cluster /opt/run_vllm_bench.py \
+      /opt/vllm_cluster_bench.py /opt/find_max_context.py /opt/measure_bandwidth.sh \
+      /opt/compare_eth_vs_rdma.sh /opt/configure_cluster.sh \
+ && ln -s /opt/start-vllm /usr/local/bin/start-vllm \
+ && ln -s /opt/start-vllm-cluster /usr/local/bin/start-vllm-cluster \
+ && ln -s /opt/run_vllm_bench.py /usr/local/bin/run-vllm-bench \
+ && ln -s /opt/vllm_cluster_bench.py /usr/local/bin/vllm-cluster-bench \
+ && ln -s /opt/find_max_context.py /usr/local/bin/find-max-context \
+ && printf 'ulimit -S -c 0\n' > /etc/profile.d/90-nocoredump.sh \
+ && chmod 0644 /etc/profile.d/90-nocoredump.sh
+
 # Fail-fast: the ViT flash-attn detection MUST reference the aiter kernel location, else
 # vision silently falls back to Torch SDPA and OOMs. Also guards against a stale buildcache
 # layer (this cost us a broken CI image once).
@@ -199,10 +231,23 @@ RUN mkdir -p /opt/triton_cache
 # libamd_smi.so via $ROCM_PATH/lib (builder added the unversioned symlink in core).
 # FLASH_ATTENTION_TRITON_AMD_ENABLE enables the ViT flash-attn path. Paths deterministic.
 ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH PYTHONNOUSERSITE=1 \
+    TOOLBOX_ROCM_SOURCE="repo.amd.com stable wheels" \
     ROCM_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core \
     LD_LIBRARY_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib:/opt/venv/lib/python3.12/site-packages/_rocm_sdk_libraries/lib \
     PYTORCH_ROCM_ARCH=gfx1151 ROCBLAS_USE_HIPBLASLT=1 FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE \
     HIP_FORCE_DEV_KERNARG=1 VLLM_USE_TRITON_AWQ=1 MIOPEN_FIND_MODE=FAST \
     TRITON_CACHE_DIR=/opt/triton_cache
+
+# Image-contract smoke test: a successful build must contain the documented toolbox entrypoints
+# and their immediate runtime dependencies. This intentionally runs before publishing.
+RUN for command_name in \
+      start-vllm start-vllm-cluster run-vllm-bench vllm-cluster-bench find-max-context \
+      vllm ray dialog ssh ip pgrep rocm-smi rdma ibv_devices perfquery ping iperf3 lspci; do \
+      command -v "$command_name" >/dev/null || { echo "ERROR: missing runtime command: $command_name" >&2; exit 1; }; \
+    done \
+ && python -m py_compile \
+      /opt/start-vllm /opt/start-vllm-cluster /opt/cluster_manager.py /opt/models.py \
+      /opt/bench_utils.py /opt/run_vllm_bench.py /opt/vllm_cluster_bench.py /opt/find_max_context.py \
+ && rm -rf /opt/__pycache__
 WORKDIR /opt
 CMD ["/bin/bash"]
