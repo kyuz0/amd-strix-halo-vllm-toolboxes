@@ -108,20 +108,23 @@ RUN ROOT=$(rocm-sdk path --root) && \
       LD_LIBRARY_PATH=$ROOT/lib:$ROOT/lib/llvm/lib && \
     export CMAKE_ARGS="-DROCM_PATH=$ROOT -DHIP_PATH=$ROOT -DAMDGPU_TARGETS=gfx1151 -DHIP_ARCHITECTURES=gfx1151" && \
     python -m pip wheel --no-build-isolation --no-deps -w /tmp/dist -v . && \
-    python -m pip install /tmp/dist/*.whl && rm -rf /tmp/dist
+    python -m pip freeze \
+      | grep -E '^(amd-torch-device-gfx1151|torch|torchaudio|torchvision|triton)==' \
+      > /tmp/rocm-stack.constraints && \
+    TORCH_BEFORE=$(python -c 'import torch; print(torch.__version__)') && \
+    TRITON_BEFORE=$(python -c 'import triton; print(triton.__version__)') && \
+    python -m pip install -c /tmp/rocm-stack.constraints -r requirements/rocm.txt && \
+    python -m pip install --no-deps /tmp/dist/*.whl && \
+    test "$(python -c 'import torch; print(torch.__version__)')" = "$TORCH_BEFORE" && \
+    test "$(python -c 'import triton; print(triton.__version__)')" = "$TRITON_BEFORE" && \
+    rm -rf /tmp/dist /tmp/rocm-stack.constraints
 RUN python -m pip install ray
 
 
-# Pre-warm aiter's common import path. Keep the complete, torch-matched ROCm development SDK:
-# AITER compiles model-specific modules at runtime, and DeepSeek-V4's module_mhc requires
-# development headers such as thrust/complex.h that are not present in rocm-sdk-core alone.
-# amdsmi still resolves libamd_smi.so through _rocm_sdk_core's unversioned symlink.
-RUN ROOT=$(rocm-sdk path --root) && \
-    export ROCM_PATH=$ROOT HIP_PATH=$ROOT \
-      PATH=$ROOT/bin:$ROOT/lib/llvm/bin:$PATH \
-      HIP_DEVICE_LIB_PATH=$ROOT/lib/llvm/amdgcn/bitcode \
-      LD_LIBRARY_PATH=$ROOT/lib:$ROOT/lib/llvm/lib && \
-    python -c "import aiter; print('aiter JIT prewarmed OK')"
+# AITER v0.1.19 detects the native GPU while importing and therefore cannot be imported on
+# GitHub's GPU-less image builder. Verify the package is installed without executing it;
+# model-specific modules, including DeepSeek-V4 MHC, JIT-compile on the target gfx1151 host.
+RUN python -c "import importlib.util; assert importlib.util.find_spec('aiter'); print('aiter package installed OK')"
 RUN CORE=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core && \
     ln -sf libamd_smi.so.26 "$CORE/lib/libamd_smi.so" && \
     rm -rf /opt/vllm /root/.cache/pip
