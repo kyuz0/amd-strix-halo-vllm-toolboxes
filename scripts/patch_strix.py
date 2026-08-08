@@ -45,7 +45,7 @@ def patch_vllm():
     # carveout as the VRAM total on APUs); that is worked around in scripts/patch_amdsmi.py,
     # at the layer where the bug actually is, so vLLM needs no memory patch at all.
 
-    # Patch 2: _aiter_ops.py (Enable AITER on gfx1x, disable FP8 linear)
+    # Patch 2: _aiter_ops.py (Enable AITER on gfx1151, disable unsafe gfx1x ops)
     p_aiter = Path('vllm/_aiter_ops.py')
     if p_aiter.exists():
         txt = p_aiter.read_text()
@@ -55,12 +55,33 @@ def patch_vllm():
             txt = txt.replace("from vllm.platforms import current_platform", 
                               "from vllm.platforms import current_platform\nfrom vllm.platforms.rocm import on_gfx1x")
 
-        # Extend is_aiter_found_and_supported. Scope the call-site replace to that
-        # function's `return on_mi3xx()` — a bare "on_mi3xx()" replace also flipped
-        # is_linear_hipbmm_enabled on gfx1x (unintended; found in the v0.26.0 audit).
-        if "or on_gfx1x()" not in txt:
-            txt = txt.replace("import on_mi3xx", "import on_mi3xx, on_gfx1x")
-            txt = txt.replace("return on_mi3xx()", "return (on_mi3xx() or on_gfx1x())")
+        # Extend only the central AITER capability gate. v0.26.0 used on_mi3xx();
+        # v0.27.0rc1 changed it to get_cdna_version() > 2. Support both layouts,
+        # scope the override to gfx1151, and fail the build if neither known anchor
+        # is present instead of printing a false-success message.
+        aiter_gate_variants = (
+            (
+                "        from vllm.platforms.rocm import on_mi3xx\n\n"
+                "        return on_mi3xx()\n",
+                "        from vllm.platforms.rocm import on_gfx1151, on_mi3xx\n\n"
+                "        return on_mi3xx() or on_gfx1151()\n",
+            ),
+            (
+                "        from vllm.platforms.rocm import get_cdna_version\n\n"
+                "        return get_cdna_version() > 2\n",
+                "        from vllm.platforms.rocm import get_cdna_version, on_gfx1151\n\n"
+                "        return get_cdna_version() > 2 or on_gfx1151()\n",
+            ),
+        )
+        if not any(new in txt for _, new in aiter_gate_variants):
+            matches = [(old, new) for old, new in aiter_gate_variants if old in txt]
+            if len(matches) != 1:
+                raise RuntimeError(
+                    "Unsupported vLLM is_aiter_found_and_supported() layout; "
+                    "refusing to build without the gfx1151 AITER gate"
+                )
+            old, new = matches[0]
+            txt = txt.replace(old, new, 1)
 
         # Disable FP8 linear
         if "is_linear_fp8_enabled" in txt:
@@ -84,17 +105,40 @@ def patch_vllm():
             )
             
         p_aiter.write_text(txt)
-        print(" -> Patched vllm/_aiter_ops.py (gfx1x support, FP8 linear empty, MoE disabled)")
+        print(" -> Patched vllm/_aiter_ops.py (gfx1151 AITER gate, FP8 linear/MoE safety)")
 
-    # Patch 3: rocm_aiter_fa.py
+    # Patch 3: rocm_aiter_fa.py (allow the explicit ROCM_AITER_FA backend on gfx1151)
     p_fa = Path('vllm/v1/attention/backends/rocm_aiter_fa.py')
     if p_fa.exists():
         txt = p_fa.read_text()
-        if "on_gfx1x" not in txt:
-            txt = txt.replace("from vllm.platforms.rocm import on_mi3xx", "from vllm.platforms.rocm import on_mi3xx, on_gfx1x")
-            txt = txt.replace("on_mi3xx()", "(on_mi3xx() or on_gfx1x())")
-            p_fa.write_text(txt)
-            print(" -> Patched vllm/v1/attention/backends/rocm_aiter_fa.py (gfx1x support)")
+        fa_gate_variants = (
+            (
+                "        from vllm.platforms.rocm import on_mi3xx\n",
+                "        from vllm.platforms.rocm import on_gfx1151, on_mi3xx\n",
+                "        return on_mi3xx()\n",
+                "        return on_mi3xx() or on_gfx1151()\n",
+            ),
+            (
+                "        from vllm.platforms.rocm import get_cdna_version\n",
+                "        from vllm.platforms.rocm import get_cdna_version, on_gfx1151\n",
+                "        return get_cdna_version() > 2\n",
+                "        return get_cdna_version() > 2 or on_gfx1151()\n",
+            ),
+        )
+        if not any(new_import in txt and new_return in txt
+                   for _, new_import, _, new_return in fa_gate_variants):
+            matches = [variant for variant in fa_gate_variants
+                       if variant[0] in txt and variant[2] in txt]
+            if len(matches) != 1:
+                raise RuntimeError(
+                    "Unsupported ROCM_AITER_FA supports_compute_capability() layout; "
+                    "refusing to build without the gfx1151 backend gate"
+                )
+            old_import, new_import, old_return, new_return = matches[0]
+            txt = txt.replace(old_import, new_import, 1)
+            txt = txt.replace(old_return, new_return, 1)
+        p_fa.write_text(txt)
+        print(" -> Patched vllm/v1/attention/backends/rocm_aiter_fa.py (gfx1151 support)")
 
     # Patch 3.5: unquantized.py (Hard-block AITER MoE forced override on gfx1x)
     p_unquant = Path('vllm/model_executor/layers/fused_moe/oracle/unquantized.py')

@@ -158,7 +158,7 @@ def run_throughput(model, tp_size, backend_name="Default", output_dir=RESULTS_DI
 
     # Explicitly set Attention Backend for every run
     if backend_name == "AITER-Attn":
-        cmd.extend(["--attention-backend", "ROCM_ATTN"])
+        cmd.extend(["--attention-backend", "ROCM_AITER_FA"])
     elif backend_name == "ROCm-Attn":
         cmd.extend(["--attention-backend", "ROCM_ATTN"])
     else:
@@ -168,7 +168,7 @@ def run_throughput(model, tp_size, backend_name="Default", output_dir=RESULTS_DI
 
     # ENV Setup: Global + Model Specific
     env = os.environ.copy()
-    env["VLLM_DISABLE_COMPILE_CACHE"] = "1"
+    env.pop("VLLM_ROCM_USE_AITER", None)
     
     # Inject model specific env vars (e.g. for AWQ)
     model_env = MODEL_TABLE[model].get("env", {})
@@ -353,8 +353,8 @@ if __name__ == "__main__":
             run_throughput(m, tp, "ROCm-Attn", RESULTS_DIR / "rocm", rocm_env, overrides=overrides)
             
             # 3. AITER Attention
-            aiter_env = {"VLLM_ROCM_USE_AITER": "1"}
-            print(f"[DEBUG] Forcing AITER Env: {aiter_env} + CLI: --attention-backend ROCM_ATTN")
+            aiter_env = {}
+            print("[DEBUG] Forcing CLI: --attention-backend ROCM_AITER_FA")
             run_throughput(m, tp, "AITER-Attn", RESULTS_DIR / "aiter", aiter_env, overrides=overrides)
             
     print_summary(valid_tp_args)

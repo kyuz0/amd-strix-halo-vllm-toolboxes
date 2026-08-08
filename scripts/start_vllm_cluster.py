@@ -295,16 +295,13 @@ def configure_and_launch_vllm(model_idx, head_ip):
     print(f"Detected RDMA Interface: {rdma_iface}")
     
     env = os.environ.copy()
-    env["VLLM_DISABLE_COMPILE_CACHE"] = "1"
+    env.pop("VLLM_ROCM_USE_AITER", None)
     env["RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES"] = "1"
     env["VLLM_HOST_IP"] = head_ip
     env["NCCL_SOCKET_IFNAME"] = rdma_iface
     env["NCCL_IB_GID_INDEX"] = "1"
     env["NCCL_NET_GDR_LEVEL"] = "0"
     
-    if current_attn_backend == "AITER":
-        env["VLLM_ROCM_USE_AITER"] = "1"
-        
     cmd = [
         "vllm", "serve", model_id,
         "--host", HOST,
@@ -316,7 +313,7 @@ def configure_and_launch_vllm(model_idx, head_ip):
     ]
 
     if current_attn_backend == "AITER":
-        cmd.extend(["--attention-backend", "ROCM_ATTN"])
+        cmd.extend(["--attention-backend", "ROCM_AITER_FA"])
     elif current_attn_backend == "ROCm (CK)":
         cmd.extend(["--attention-backend", "ROCM_ATTN"])
     else:

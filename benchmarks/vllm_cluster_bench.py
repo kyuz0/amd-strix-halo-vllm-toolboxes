@@ -140,7 +140,7 @@ def get_cluster_env():
     host_ip = get_local_ip(rdma_iface)
     
     env = os.environ.copy()
-    env["VLLM_DISABLE_COMPILE_CACHE"] = "1"
+    env.pop("VLLM_ROCM_USE_AITER", None)
     
     # Critical Cluster Envs (Match start_vllm_cluster.py)
     env["RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES"] = "1"
@@ -229,7 +229,7 @@ def run_bench_set(model, backend_name, output_dir, extra_env=None, overrides=Non
 
     # Explicitly set Attention Backend for every run
     if backend_name == "AITER-Attn":
-        cmd.extend(["--attention-backend", "ROCM_ATTN"])
+        cmd.extend(["--attention-backend", "ROCM_AITER_FA"])
     elif backend_name == "ROCm-Attn":
         cmd.extend(["--attention-backend", "ROCM_ATTN"])
     else:
@@ -293,7 +293,7 @@ def run_cluster_throughput(model, overrides=None):
             model,
             "AITER-Attn",
             RESULTS_DIR / "aiter",
-            extra_env={"VLLM_ROCM_USE_AITER": "1"},
+            extra_env={},
             overrides=overrides
         )
 

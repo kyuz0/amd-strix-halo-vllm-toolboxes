@@ -319,18 +319,15 @@ def configure_and_launch(model_idx, gpu_count):
     
     # Env Vars
     env = os.environ.copy()
-    env["VLLM_DISABLE_COMPILE_CACHE"] = "1"
+    # Attention backend selection is independent from the broad AITER operator
+    # toggle. Keep the operator pack off; ROCM_AITER_FA can be requested explicitly.
+    env.pop("VLLM_ROCM_USE_AITER", None)
     
     if current_attn_backend == "AITER":
-        env["VLLM_ROCM_USE_AITER"] = "1"
-        cmd.extend(["--attention-backend", "ROCM_ATTN"])
+        cmd.extend(["--attention-backend", "ROCM_AITER_FA"])
     elif current_attn_backend == "ROCm (CK)":
-        if "VLLM_ROCM_USE_AITER" in env:
-            del env["VLLM_ROCM_USE_AITER"]
         cmd.extend(["--attention-backend", "ROCM_ATTN"])
     else: # Triton
-        if "VLLM_ROCM_USE_AITER" in env:
-            del env["VLLM_ROCM_USE_AITER"]
         cmd.extend(["--attention-backend", "TRITON_ATTN"])
 
     env.update(config.get("env", {}))
