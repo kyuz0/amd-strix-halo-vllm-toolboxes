@@ -3,8 +3,7 @@
 set -e
 
 TOOLBOX_NAME="${TOOLBOX_NAME:-vllm}"
-# Override to use a different image family, e.g. the Ubuntu / stable-ROCm one:
-#   IMAGE_REPO=docker.io/kyuz0/vllm-rocm-gfx1151 ./refresh_toolbox.sh latest
+# Override only when intentionally testing another image repository.
 IMAGE_REPO="${IMAGE_REPO:-docker.io/kyuz0/vllm-therock-gfx1151}"
 
 # --- Channel selection (latest / dev) ---

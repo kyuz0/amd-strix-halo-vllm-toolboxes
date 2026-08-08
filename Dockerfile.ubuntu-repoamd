@@ -128,16 +128,28 @@ RUN CORE=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core && \
 FROM docker.io/ubuntu:24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Toolbx inspects this label before treating a non-Fedora image as a toolbox image.
+LABEL com.github.containers.toolbox="true" \
+      usage="This image is meant to be used with the toolbox command" \
+      summary="Ubuntu stable-ROCm vLLM toolbox for gfx1151"
+
 # gcc + python3.12-dev: Triton JIT-compiles a host driver module on first kernel use.
 # git: aiter/flash_attn call git for version detection at import.
 # sudo: toolbx/distrobox run their in-container user setup through it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3.12 python3.12-dev gcc git ca-certificates curl sudo \
+      python3.12 python3.12-dev gcc git ca-certificates curl sudo libcap2-bin libnss-myhostname \
       libatomic1 libnuma1 libgomp1 libelf1 libdrm2 libdrm-amdgpu1 libtinfo6 zlib1g libssl3 \
       libgoogle-perftools4 libibverbs1 librdmacm1 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Container-workflow compatibility (toolbx / distrobox / plain `podman run --group-add ...`).
+#  * Ubuntu 24.04 reserves UID 1000 for its stock `ubuntu` user. Toolbx creates the host user
+#    inside the container with the host UID, so leaving that account in place makes the first
+#    `toolbox enter` fail with "UID 1000 is not unique". Remove it, then prove during the image
+#    build that a Toolbx-style UID 1000 user can actually be created. The temporary test account
+#    is removed again so UID 1000 remains free in the published image.
+#  * machine-id / nss-myhostname: match the established Ubuntu Toolbx images in this project
+#    family so systemd/DBus and hostname resolution can be initialized by Toolbx at runtime.
 #  * render group: podman resolves `--group-add render` against the CONTAINER's /etc/group and
 #    ABORTS the start if the name is missing ("unable to find group render: no matching entries
 #    in group file"). Ubuntu ships video(44) and rdma(101) but no render, so every documented
@@ -150,7 +162,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #  * libdrm_amdgpu.so: amdsmi dlopen()s the UNVERSIONED soname, which ships only in libdrm-dev.
 #    Without the symlink `rocm-smi` (the README's own verification step) prints "get_name,
 #    Failed to load a library" and no GPU name, even though the GPU is perfectly usable.
-RUN groupadd -f -g 105 render \
+RUN (userdel -r ubuntu 2>/dev/null || true) \
+ && if getent passwd 1000 >/dev/null; then \
+      echo "ERROR: UID 1000 must be free for Toolbx user creation" >&2; \
+      getent passwd 1000 >&2; \
+      exit 1; \
+    fi \
+ && useradd --uid 1000 --no-create-home toolbox-build-test \
+ && test "$(id -u toolbox-build-test)" = "1000" \
+ && userdel toolbox-build-test \
+ && rm -f /etc/machine-id && touch /etc/machine-id \
+ && sed -i 's/^hosts:.*/& myhostname/' /etc/nsswitch.conf \
+ && groupadd -f -g 105 render \
  && ln -sf libdrm_amdgpu.so.1 /usr/lib/x86_64-linux-gnu/libdrm_amdgpu.so
 
 COPY --from=builder /opt/venv /opt/venv

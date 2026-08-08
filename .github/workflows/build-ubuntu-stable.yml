@@ -1,8 +1,9 @@
 name: build-ubuntu-stable
 
 # Ubuntu + STABLE ROCm/torch (repo.amd.com per-arch gfx1151 wheels) vLLM image, WITH vision.
-# Publishes docker.io/<owner>/vllm-rocm-gfx1151. Replaces the two former Ubuntu images
-# (old dev-ubuntu base + the nightly variant) — see Dockerfile.ubuntu-repoamd.
+# Publishes the canonical docker.io/<owner>/vllm-therock-gfx1151 image. This Ubuntu build
+# replaces the two former Ubuntu images (old dev-ubuntu base + the nightly variant) and is
+# what refresh_toolbox.sh pulls for the requested channel — see Dockerfile.ubuntu-repoamd.
 #
 # Off the nightly treadmill: STABLE release wheels from https://repo.amd.com/rocm/whl-multi-arch/
 # (TheRock multi-arch device-package layout, ROCm 7.14). torch brings its own matched ROCm ->
@@ -50,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          REPO="${OWNER}/vllm-rocm-gfx1151"
+          REPO="${OWNER}/vllm-therock-gfx1151"
           echo "Image repo: docker.io/${REPO}"
           echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
 
