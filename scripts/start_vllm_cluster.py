@@ -37,6 +37,12 @@ else:
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = os.getenv("PORT", "8000")
 
+ATTENTION_BACKENDS = (
+    "TRITON_ATTN",
+    "ROCM_ATTN",
+    "ROCM_AITER_UNIFIED_ATTN",
+)
+
 def get_discovered_models():
     """
     Overrides the hardcoded MODELS_TO_RUN by looking at what we actually have results for.
@@ -169,8 +175,21 @@ def configure_and_launch_vllm(model_idx, head_ip):
     # Default to eager mode for stability in cluster situations, unless explicitly disabled
     use_eager = config.get("enforce_eager", True)
     trust_remote = True # Default True as per request
-    attn_backends = ["Triton", "ROCm (CK)", "AITER"]
-    current_attn_backend = "Triton" # Default to Triton
+    configured_attn_backend = config.get("attention_backend", "TRITON_ATTN")
+    attention_backend_locked = configured_attn_backend is None
+    if attention_backend_locked:
+        current_attn_backend = config.get(
+            "attention_backend_label", "Model-specific"
+        )
+        attn_backends = [current_attn_backend]
+    else:
+        if configured_attn_backend not in ATTENTION_BACKENDS:
+            raise ValueError(
+                f"Unsupported attention backend {configured_attn_backend!r} "
+                f"for {model_id}"
+            )
+        attn_backends = list(ATTENTION_BACKENDS)
+        current_attn_backend = configured_attn_backend
     current_extra_flags = list(config.get("extra_flags", []))  # Copy so edits don't mutate config
 
     while True:
@@ -248,8 +267,18 @@ def configure_and_launch_vllm(model_idx, head_ip):
             trust_remote = not trust_remote
 
         elif choice == "6":
-            idx = attn_backends.index(current_attn_backend)
-            current_attn_backend = attn_backends[(idx + 1) % len(attn_backends)]
+            if attention_backend_locked:
+                run_dialog([
+                    "--title", "Attention Backend",
+                    "--msgbox",
+                    f"{current_attn_backend}\n\n"
+                    "This model provides its own attention implementation, so "
+                    "start-vllm-cluster does not pass --attention-backend.",
+                    "10", "68"
+                ])
+            else:
+                idx = attn_backends.index(current_attn_backend)
+                current_attn_backend = attn_backends[(idx + 1) % len(attn_backends)]
 
         elif choice == "7":
             clear_cache = not clear_cache
@@ -296,6 +325,7 @@ def configure_and_launch_vllm(model_idx, head_ip):
     
     env = os.environ.copy()
     env.pop("VLLM_ROCM_USE_AITER", None)
+    env.update(config.get("env", {}))
     env["RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES"] = "1"
     env["VLLM_HOST_IP"] = head_ip
     env["NCCL_SOCKET_IFNAME"] = rdma_iface
@@ -312,12 +342,8 @@ def configure_and_launch_vllm(model_idx, head_ip):
         "--dtype", "auto"
     ]
 
-    if current_attn_backend == "AITER":
-        cmd.extend(["--attention-backend", "ROCM_AITER_FA"])
-    elif current_attn_backend == "ROCm (CK)":
-        cmd.extend(["--attention-backend", "ROCM_ATTN"])
-    else:
-        cmd.extend(["--attention-backend", "TRITON_ATTN"])
+    if not attention_backend_locked:
+        cmd.extend(["--attention-backend", current_attn_backend])
 
     cmd.extend(["--mm-encoder-attn-backend", "TRITON_ATTN"])
             
@@ -338,6 +364,7 @@ def configure_and_launch_vllm(model_idx, head_ip):
     print(f" Launching VLLM Cluster on Head: {head_ip}")
     print(f" Model:     {name}")
     print(f" Config:    TP={current_tp} | Seqs={current_seqs} | Ctx={current_ctx}")
+    print(f" Backend:   {current_attn_backend}")
     if use_eager:
         print(" Note:      Eager Mode Enabled (Recommended for Cluster Stability)")
     if current_extra_flags:
@@ -351,8 +378,9 @@ def configure_and_launch_vllm(model_idx, head_ip):
         "NCCL_IB_GID_INDEX",
         "NCCL_NET_GDR_LEVEL"
     ]
-    if "VLLM_ROCM_USE_AITER" in env:
-        vars_to_print.append("VLLM_ROCM_USE_AITER")
+    for key in config.get("env", {}):
+        if key not in vars_to_print:
+            vars_to_print.append(key)
         
     for k in vars_to_print:
         if k in env:
