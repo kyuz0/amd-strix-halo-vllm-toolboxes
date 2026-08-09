@@ -37,6 +37,12 @@ else:
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = os.getenv("PORT", "8000")
 
+ATTENTION_BACKENDS = (
+    "TRITON_ATTN",
+    "ROCM_ATTN",
+    "ROCM_AITER_UNIFIED_ATTN",
+)
+
 def detect_gpus():
     """Detects AMD GPUs via rocm-smi or /dev/dri."""
     try:
@@ -182,8 +188,21 @@ def configure_and_launch(model_idx, gpu_count):
     
     clear_cache = False  # Keep compiled kernels on normal launches; reset only when needed
     use_eager = config.get("enforce_eager", False) # Default to model config, usually False
-    attn_backends = ["Triton", "ROCm (CK)", "AITER"]
-    current_attn_backend = "Triton" # Default to Triton
+    configured_attn_backend = config.get("attention_backend", "TRITON_ATTN")
+    attention_backend_locked = configured_attn_backend is None
+    if attention_backend_locked:
+        current_attn_backend = config.get(
+            "attention_backend_label", "Model-specific"
+        )
+        attn_backends = [current_attn_backend]
+    else:
+        if configured_attn_backend not in ATTENTION_BACKENDS:
+            raise ValueError(
+                f"Unsupported attention backend {configured_attn_backend!r} "
+                f"for {model_id}"
+            )
+        attn_backends = list(ATTENTION_BACKENDS)
+        current_attn_backend = configured_attn_backend
     current_extra_flags = list(config.get("extra_flags", []))  # Copy so edits don't mutate config
     
     name = model_id.split("/")[-1]
@@ -259,9 +278,19 @@ def configure_and_launch(model_idx, gpu_count):
              pass 
 
         elif choice == "5":
-            # Cycle Attention Backend
-            idx = attn_backends.index(current_attn_backend)
-            current_attn_backend = attn_backends[(idx + 1) % len(attn_backends)]
+            if attention_backend_locked:
+                run_dialog([
+                    "--title", "Attention Backend",
+                    "--msgbox",
+                    f"{current_attn_backend}\n\n"
+                    "This model provides its own attention implementation, so "
+                    "start-vllm does not pass --attention-backend.",
+                    "10", "68"
+                ])
+            else:
+                # Cycle Attention Backend
+                idx = attn_backends.index(current_attn_backend)
+                current_attn_backend = attn_backends[(idx + 1) % len(attn_backends)]
 
         elif choice == "6":
             # Toggle Cache
@@ -338,15 +367,11 @@ def configure_and_launch(model_idx, gpu_count):
     # Env Vars
     env = os.environ.copy()
     # Attention backend selection is independent from the broad AITER operator
-    # toggle. Keep the operator pack off; ROCM_AITER_FA can be requested explicitly.
+    # toggle. Model-specific env overrides (notably DeepSeek V4) are applied below.
     env.pop("VLLM_ROCM_USE_AITER", None)
-    
-    if current_attn_backend == "AITER":
-        cmd.extend(["--attention-backend", "ROCM_AITER_FA"])
-    elif current_attn_backend == "ROCm (CK)":
-        cmd.extend(["--attention-backend", "ROCM_ATTN"])
-    else: # Triton
-        cmd.extend(["--attention-backend", "TRITON_ATTN"])
+
+    if not attention_backend_locked:
+        cmd.extend(["--attention-backend", current_attn_backend])
 
     env.update(config.get("env", {}))
 

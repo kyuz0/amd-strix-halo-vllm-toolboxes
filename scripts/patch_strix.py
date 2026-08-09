@@ -112,8 +112,8 @@ def patch_vllm():
     # Patch 2 on gfx1151, preshuffles the weights, and eventually calls AITER's
     # unsupported float8_e4m3fn quantizer. Route both decisions through
     # is_linear_fp8_enabled(); on gfx1151 Patch 2 forces that gate off, leaving
-    # AITER available for DeepSeek's attention/MHC while the linear layers use
-    # vLLM's Triton fallback.
+    # the broad AITER toggle available to the sparse-indexer helpers while the
+    # linear layers use vLLM's Triton fallback.
     dsv4_linear_gates = (
         (
             Path("vllm/models/deepseek_v4/amd/model.py"),
@@ -139,39 +139,6 @@ def patch_vllm():
             txt = txt.replace(old_gate, new_gate, 1)
             path.write_text(txt)
         print(f" -> Patched {path} (AITER FP8 linear gate respected)")
-
-    # Patch 3: rocm_aiter_fa.py (allow the explicit ROCM_AITER_FA backend on gfx1151)
-    p_fa = Path('vllm/v1/attention/backends/rocm_aiter_fa.py')
-    if p_fa.exists():
-        txt = p_fa.read_text()
-        fa_gate_variants = (
-            (
-                "        from vllm.platforms.rocm import on_mi3xx\n",
-                "        from vllm.platforms.rocm import on_gfx1151, on_mi3xx\n",
-                "        return on_mi3xx()\n",
-                "        return on_mi3xx() or on_gfx1151()\n",
-            ),
-            (
-                "        from vllm.platforms.rocm import get_cdna_version\n",
-                "        from vllm.platforms.rocm import get_cdna_version, on_gfx1151\n",
-                "        return get_cdna_version() > 2\n",
-                "        return get_cdna_version() > 2 or on_gfx1151()\n",
-            ),
-        )
-        if not any(new_import in txt and new_return in txt
-                   for _, new_import, _, new_return in fa_gate_variants):
-            matches = [variant for variant in fa_gate_variants
-                       if variant[0] in txt and variant[2] in txt]
-            if len(matches) != 1:
-                raise RuntimeError(
-                    "Unsupported ROCM_AITER_FA supports_compute_capability() layout; "
-                    "refusing to build without the gfx1151 backend gate"
-                )
-            old_import, new_import, old_return, new_return = matches[0]
-            txt = txt.replace(old_import, new_import, 1)
-            txt = txt.replace(old_return, new_return, 1)
-        p_fa.write_text(txt)
-        print(" -> Patched vllm/v1/attention/backends/rocm_aiter_fa.py (gfx1151 support)")
 
     # Patch 3.5: unquantized.py (Hard-block AITER MoE forced override on gfx1x)
     p_unquant = Path('vllm/model_executor/layers/fused_moe/oracle/unquantized.py')

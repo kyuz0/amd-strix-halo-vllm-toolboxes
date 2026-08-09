@@ -81,13 +81,18 @@ MODEL_TABLE = {
         ]
     },
 
-    # DeepSeek V4 Flash requires AITER for its AMD attention/indexer paths, but
-    # gfx1151 cannot use AITER's FP8 linear kernels. Eager mode avoids the
-    # unsupported FP8 indexer CUDA-graph profiling path.
+    # DeepSeek V4 Flash owns its ROCm sparse-MLA attention path. Enable broad
+    # AITER only for the tested sparse-indexer MQA-logits helper; gfx1151 cannot
+    # use AITER's FP8 linear kernels. Keep eager mode as part of the validated
+    # launch recipe.
     "deepseek-ai/DeepSeek-V4-Flash-0731": {
         "trust_remote": True,
         "valid_tp": [1],
         "enforce_eager": True,
+        # The ROCm DeepSeek-V4 model hardwires its own sparse MLA backend
+        # (ROCM_FLASHMLA_SPARSE_DSV4); generic --attention-backend is inapplicable.
+        "attention_backend": None,
+        "attention_backend_label": "ROCM_FLASHMLA_SPARSE_DSV4 (model-specific)",
         "env": {
             "VLLM_ROCM_USE_AITER": "1",
             "VLLM_ROCM_USE_AITER_LINEAR": "0",
@@ -106,6 +111,13 @@ MODEL_TABLE = {
     "Qwen/Qwen3.6-35B-A3B": {
         "trust_remote": True,
         "valid_tp": [1],
+        # Verified end-to-end on gfx1151. Explicit backend selection works while
+        # the broad AITER toggle remains off, avoiding the unsupported sampler.
+        "attention_backend": "ROCM_AITER_UNIFIED_ATTN",
+        "env": {
+            "VLLM_ROCM_USE_AITER": "0",
+            "VLLM_ROCM_USE_AITER_LINEAR": "0",
+        },
         "max_num_seqs": "64",
         "max_tokens": "16384",
         "extra_flags": [

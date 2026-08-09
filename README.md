@@ -310,11 +310,13 @@ This toolbox supports high-performance clustering of multiple Strix Halo nodes u
 
 ## 8) AITER on Strix Halo Support Status
 
-This toolbox supports running **AITER Flash Attention** on Strix Halo (gfx1151). Normally, vLLM crashes on RDNA APUs if `VLLM_ROCM_USE_AITER=1` is enabled, because AITER attempts to JIT-compile CDNA-specific MoE (Mixture of Experts) and CustomOps assembly instructions that lack RDNA hardware support.
+This toolbox uses only the AITER paths verified on Strix Halo (gfx1151). The broad `VLLM_ROCM_USE_AITER` toggle stays disabled by default because it also enables unsupported operators such as the AITER sampler.
 
 To bypass this limitation, `scripts/patch_strix.py` applies a few APU-specific guards (building on the work from `ai-notes` linked above):
 * **Patch 2 (`vllm/_aiter_ops.py`)**: Intercepts the MoE gate (`is_fused_moe_enabled()`) forcing it to disable AITER MoE and Linear FP8 on `gfx1x` architectures.
 * **Patch 3.5 (`vllm/model_executor/layers/fused_moe/oracle/unquantized.py`)**: Blocks the `VLLM_ROCM_USE_AITER_MOE` environment variable from forcing a JIT compile override.
 * **Patch 5 (`vllm/platforms/rocm.py`)**: Bypasses the RMSNorm custom op registration on `gfx1x` to prevent CUDA Graph capture crashes during model initialization.
 
-Because of these patches, when `ROCm` Attention is selected in the launcher, vLLM routes Attention to AITER (using the `ds_swizzle` RDNA header fallbacks injected via `scripts/patch_aiter_headers.py`), while safely falling back to Triton for MoE matrices and Torch/Triton for RMSNorm.
+The launcher exposes the exact generic backend names: `TRITON_ATTN`, `ROCM_ATTN`, and `ROCM_AITER_UNIFIED_ATTN`. `Qwen/Qwen3.6-35B-A3B` defaults to the gfx1151-verified unified AITER backend with the broad AITER toggle disabled. The legacy `ROCM_AITER_FA` backend is not offered because its paged-attention decode kernel has no Navi implementation.
+
+DeepSeek V4 is separate: its ROCm model implementation hardwires the model-specific `ROCM_FLASHMLA_SPARSE_DSV4` backend, so the launcher does not pass `--attention-backend`. Its model entry enables AITER for the tested sparse-indexer MQA-logits helper, disables AITER linear, and uses `--logprobs-mode processed_logprobs` to avoid the unsupported sampler.

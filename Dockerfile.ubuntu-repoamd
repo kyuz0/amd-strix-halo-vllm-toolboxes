@@ -250,8 +250,9 @@ RUN grep -q "aiter.ops.triton._triton_kernels.flash_attn_triton_amd" \
 # exposed separately through CPLUS_INCLUDE_PATH for model-specific AITER JIT compilation.
 # amdsmi resolves its unversioned symlink from _rocm_sdk_core/lib.
 # FLASH_ATTENTION_TRITON_AMD_ENABLE enables the ViT flash-attn path. Paths deterministic.
-# Keep AITER available for supported attention/indexer operators, but disable its FP8 linear
-# path, which is unsupported on gfx1151. start-vllm applies per-model overrides.
+# Keep the broad AITER operator toggle off by default: it also enables the unsupported gfx1151
+# sampler. start-vllm enables AITER only for models such as DeepSeek V4 that use its
+# sparse-indexer helper, while selecting AITER unified attention explicitly where appropriate.
 ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH PYTHONNOUSERSITE=1 \
     TOOLBOX_ROCM_SOURCE="repo.amd.com stable wheels" \
     ROCM_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core \
@@ -262,9 +263,17 @@ ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH PYTHONNOUSERSITE=1 \
     LIBRARY_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel/lib \
     LD_LIBRARY_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib:/opt/venv/lib/python3.12/site-packages/_rocm_sdk_libraries/lib \
     PYTORCH_ROCM_ARCH=gfx1151 GPU_ARCHS=gfx1151 FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE \
-    VLLM_ROCM_USE_AITER=1 VLLM_ROCM_USE_AITER_LINEAR=0 \
+    VLLM_ROCM_USE_AITER=0 VLLM_ROCM_USE_AITER_LINEAR=0 \
     HIP_FORCE_DEV_KERNARG=1 MIOPEN_FIND_MODE=FAST \
     TRITON_CACHE_DIR=/opt/triton_cache
+
+# The core wheel contains the versioned HIP runtime, but hipcc's --hip-link path requires the
+# unversioned linker name in this exact directory. LIBRARY_PATH cannot override that absolute
+# lookup, so provide the normal development symlink explicitly for AITER runtime JIT builds.
+RUN if [ ! -e "$ROCM_PATH/lib/libamdhip64.so" ] && [ ! -L "$ROCM_PATH/lib/libamdhip64.so" ]; then \
+      ln -s libamdhip64.so.7 "$ROCM_PATH/lib/libamdhip64.so"; \
+    fi \
+ && test -e "$ROCM_PATH/lib/libamdhip64.so"
 
 # Image-contract smoke test: a successful build must contain the documented toolbox entrypoints
 # and their immediate runtime dependencies. This intentionally runs before publishing.
@@ -279,10 +288,12 @@ RUN for command_name in \
  && test -f "$ROCM_DEVEL_PATH/include/thrust/complex.h" \
  && test -f "$ROCM_DEVEL_PATH/lib/libamdhip64.so" \
  && hipconfig --version \
- && hipcc --offload-arch=gfx1151 -x hip -c /dev/null -o /tmp/hipcc-smoke.o \
+ && printf '#include <hip/hip_runtime.h>\nextern "C" __global__ void hip_link_smoke() {}\n' \
+      | hipcc --offload-arch=gfx1151 -fPIC -shared -x hip - -o /tmp/hipcc-link-smoke.so \
+ && test -s /tmp/hipcc-link-smoke.so \
  && printf '#include <thrust/complex.h>\n' \
       | hipcc --offload-arch=gfx1151 -x hip -c - -o /tmp/hipcc-thrust-smoke.o \
- && rm -f /tmp/hipcc-smoke.o /tmp/hipcc-thrust-smoke.o \
+ && rm -f /tmp/hipcc-link-smoke.so /tmp/hipcc-thrust-smoke.o \
  && grep -q '"gfx1151"' \
       /opt/venv/lib/python3.12/site-packages/aiter_meta/csrc/cpp_itfs/utils.py \
  && python -m py_compile \
