@@ -127,9 +127,8 @@ MODEL_TABLE = {
         ]
     },
 
-    # Reuse the unified-AITER recipe validated with the equivalent safetensors
-    # checkpoint, and use that checkpoint for config/tokenizer data.
-    "LiquidAI/LFM2.5-1.2B-Instruct-GGUF": {
+    # Verified end-to-end on gfx1151 with unified AITER.
+    "LiquidAI/LFM2.5-1.2B-Instruct": {
         "trust_remote": False,
         "valid_tp": [1, 2],
         "attention_backend": "ROCM_AITER_UNIFIED_ATTN",
@@ -140,10 +139,6 @@ MODEL_TABLE = {
         "ctx": "128000",
         "max_num_seqs": "64",
         "max_tokens": "16384",
-        "extra_flags": [
-            "--tokenizer", "LiquidAI/LFM2.5-1.2B-Instruct",
-            "--hf-config-path", "LiquidAI/LFM2.5-1.2B-Instruct",
-        ]
     },
 
     # Muse Glimmer is a BF16 multimodal model with alternating 2k sliding and
