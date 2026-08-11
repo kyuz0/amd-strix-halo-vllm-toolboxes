@@ -127,6 +127,46 @@ MODEL_TABLE = {
         ]
     },
 
+    # The upstream GGUF repo contains several files, so select its BF16 artifact
+    # explicitly. Reuse the unified-AITER recipe validated with the equivalent
+    # safetensors checkpoint, and use that checkpoint for config/tokenizer data.
+    "LiquidAI/LFM2.5-1.2B-Instruct-GGUF:BF16": {
+        "trust_remote": False,
+        "valid_tp": [1, 2],
+        "attention_backend": "ROCM_AITER_UNIFIED_ATTN",
+        "env": {
+            "VLLM_ROCM_USE_AITER": "0",
+            "VLLM_ROCM_USE_AITER_LINEAR": "0",
+        },
+        "ctx": "128000",
+        "max_num_seqs": "64",
+        "max_tokens": "16384",
+        "extra_flags": [
+            "--tokenizer", "LiquidAI/LFM2.5-1.2B-Instruct",
+            "--hf-config-path", "LiquidAI/LFM2.5-1.2B-Instruct",
+        ]
+    },
+
+    # Muse Glimmer is a BF16 multimodal model with alternating 2k sliding and
+    # full-attention layers. vLLM does not yet have a native model class, so use
+    # its Transformers implementation. Unified AITER supports its GQA shape,
+    # 128-d head size, sliding windows, and multimodal-prefix attention.
+    "meta-models/Muse-Glimmer-30B": {
+        "trust_remote": False,
+        "valid_tp": [1, 2],
+        "attention_backend": "ROCM_AITER_UNIFIED_ATTN",
+        "env": {
+            "VLLM_ROCM_USE_AITER": "0",
+            "VLLM_ROCM_USE_AITER_LINEAR": "0",
+        },
+        "ctx": "131072",
+        "max_num_seqs": "64",
+        "max_tokens": "16384",
+        "extra_flags": [
+            "--model-impl", "transformers",
+        ]
+    },
+
     "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit": {
         "trust_remote": True,
         "valid_tp": [1], 
