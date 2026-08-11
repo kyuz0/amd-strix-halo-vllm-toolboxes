@@ -127,10 +127,9 @@ MODEL_TABLE = {
         ]
     },
 
-    # The upstream GGUF repo contains several files, so select its BF16 artifact
-    # explicitly. Reuse the unified-AITER recipe validated with the equivalent
-    # safetensors checkpoint, and use that checkpoint for config/tokenizer data.
-    "LiquidAI/LFM2.5-1.2B-Instruct-GGUF:BF16": {
+    # Reuse the unified-AITER recipe validated with the equivalent safetensors
+    # checkpoint, and use that checkpoint for config/tokenizer data.
+    "LiquidAI/LFM2.5-1.2B-Instruct-GGUF": {
         "trust_remote": False,
         "valid_tp": [1, 2],
         "attention_backend": "ROCM_AITER_UNIFIED_ATTN",
