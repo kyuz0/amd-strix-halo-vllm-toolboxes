@@ -1,12 +1,19 @@
 # AMD Strix Halo (gfx1151) — vLLM Toolbox/Container
 
-An **Fedora 43** Docker/Podman container that is **Toolbx-compatible** (usable as a Fedora toolbox) for serving LLMs with **vLLM** on **AMD Ryzen AI Max “Strix Halo” (gfx1151)**. Built on the **TheRock nightly builds** for ROCm.
+An **Ubuntu 24.04-based**, Docker/Podman container that is **Toolbx-compatible** for serving LLMs with **vLLM** on **AMD Ryzen AI Max “Strix Halo” (gfx1151)**. The current image tracks the **stable ROCm 7.14 release** and the **latest stable vLLM release** at build time.
 
 ---
 
-## 🚀 High-Performance Clustering Support (New!)
+## 🚀 Current Image Status
 
-**Update:** This toolbox now ships with a **custom build of ROCm/RCCL** that enables **native RDMA/RoCE v2 support for Strix Halo (gfx1151)**. This allows you to connect two nodes via a low-latency interconnect (e.g., Intel E810) and run vLLM with Tensor Parallelism (TP=2) effectively acting as a single 256GB Unified Memory GPU.
+The Ubuntu image has been tested for:
+
+* single-host vLLM serving;
+* two-host RCCL with Tensor Parallelism (TP=2) over Ethernet; and
+* two-host RCCL with Tensor Parallelism (TP=2) over RDMA/RoCE.
+
+> [!WARNING]
+> Performance benchmarks have **not** yet been run for this Ubuntu image. The benchmark tables and linked results below are historical and must not be treated as performance results for the current image.
 
 👉 **[Read the Full RDMA Cluster Setup Guide](rdma_cluster/setup_guide.md)** for hardware requirements and configuration instructions.
 
@@ -29,17 +36,17 @@ This is a hobby project maintained in my spare time. If you find these toolboxes
 
 ## Table of Contents
 
-* [Tested Models (Benchmarks)](#tested-models-benchmarks)
+* [Tested Models and Historical Benchmarks](#tested-models-and-historical-benchmarks)
 * [1) Toolbx vs Docker/Podman](#1-toolbx-vs-dockerpodman)
-* [2) Quickstart — Fedora Toolbx](#2-quickstart--fedora-toolbx)
-* [3) Quickstart — Ubuntu (Distrobox)](#3-quickstart--ubuntu-distrobox)
+* [2) Quickstart — Toolbx (Ubuntu image)](#2-quickstart--toolbx-ubuntu-image)
+* [3) Quickstart — Distrobox](#3-quickstart--distrobox)
 * [4) Testing the API](#4-testing-the-api)
 * [5) Use a Web UI for Chatting](#5-use-a-web-ui-for-chatting)
 * [6) Host Configuration](#6-host-configuration)
 * [7) Distributed Clustering (RDMA/RoCE)](#7-distributed-clustering-rdmaroce)
 
 
-## Tested Models (Benchmarks)
+## Tested Models and Historical Benchmarks
 
 > [!IMPORTANT]
 > **Note on Throughput:** These benchmarks measure **Peak Multi-User Throughput** (Tokens/Second) at high concurrency (batching multiple sequences simultaneously to saturate the Strix Halo's memory bandwidth). If you are testing with a single request (Concurrency = 1), your individual generation speed will be lower than these maximum hardware-saturation numbers. These metrics represent the total capacity of the system under heavy load.
@@ -65,7 +72,7 @@ View full benchmarks at: [https://kyuz0.github.io/amd-strix-halo-vllm-toolboxes/
 
 ## 1) Toolbx vs Docker/Podman
 
-The `kyuz0/vllm-therock-gfx1151` image is available in two channels:
+The canonical `kyuz0/vllm-therock-gfx1151` image is Ubuntu-based and is available in two channels:
 
 | Tag | Description |
 | :--- | :--- |
@@ -74,15 +81,17 @@ The `kyuz0/vllm-therock-gfx1151` image is available in two channels:
 
 The image can be used both as:
 
-* **Fedora Toolbx (recommended for development):** Toolbx shares your **HOME** and user, so models/configs live on the host. Great for iterating quickly while keeping the host clean.
+* **Toolbx (recommended for development):** Toolbx shares your **HOME** and user, so models/configs live on the host. The image is Ubuntu-based even when it is created from a Fedora host.
 * **Docker/Podman (recommended for deployment/perf):** Use for running vLLM as a service (host networking, IPC tuning, etc.). Always **mount a host directory** for model weights so they stay outside the container.
 
 
 ---
 
-## 2) Quickstart — Fedora Toolbx
+## 2) Quickstart — Toolbx (Ubuntu image)
 
-**Recommended:** Use the included `refresh_toolbox.sh` script. It pulls the image and creates the toolbox with the correct parameters:
+The canonical image is Ubuntu 24.04-based but remains Toolbx-compatible. On Fedora hosts, use the included `refresh_toolbox.sh` script:
+
+It pulls the image and creates the toolbox with the correct parameters:
 
 ```bash
 # Interactive — prompts you to choose latest (default) or dev
@@ -134,19 +143,17 @@ start-vllm
 
 ---
 
-## 3) Quickstart — Ubuntu (Distrobox)
+## 3) Quickstart — Distrobox
 
-Ubuntu’s toolbox package still breaks GPU access, so use Distrobox instead:
+If you are using Distrobox instead of Toolbx:
 
 ```bash
-distrobox create -n vllm \
+distrobox create -n vllm-therock-gfx1151 \
   --image docker.io/kyuz0/vllm-therock-gfx1151:latest \
   --additional-flags "--device /dev/kfd --device /dev/dri --group-add keep-groups --security-opt seccomp=unconfined"
 
-distrobox enter vllm
+distrobox enter vllm-therock-gfx1151
 ```
-
-The canonical `vllm-therock-gfx1151` image is built on Ubuntu with the stable ROCm stack.
 
 > **Verification:** Run `rocm-smi` to check GPU status. It should print your GPU name (e.g.
 > `Radeon 8060S Graphics`). If it reports `get_name, Failed to load a library` or no device at
@@ -273,6 +280,10 @@ rocm-smi --showproductname          # should print your GPU name
 | **System Memory** | 128 GB RAM                                                  |
 | **GPU Memory**    | 512 MB allocated in BIOS                                    |
 | **Host OS**       | Fedora 43, Linux 6.18.5-200.fc43.x86_64            |
+| **Container**     | Ubuntu 24.04                                             |
+| **ROCm**          | Stable ROCm 7.14                                        |
+| **vLLM**          | Latest stable release at image build time               |
+| **RCCL validation** | TP=2 tested over Ethernet and RDMA/RoCE                |
 
 ### 6.3 Kernel Parameters (tested on Fedora 42)
 
@@ -302,12 +313,12 @@ sudo reboot
 
 ## 7) Distributed Clustering (RDMA/RoCE)
 
-This toolbox supports high-performance clustering of multiple Strix Halo nodes using Infiniband or RoCE v2 (e.g., Intel E810). This enables **Tensor Parallelism** across machines with extremely low latency (~5µs).
+This toolbox supports clustering multiple Strix Halo nodes using Ethernet or RDMA/RoCE (for example, with an Intel E810). This enables **Tensor Parallelism** across machines.
 
 **Detailed Documentation:** [RDMA Cluster Setup Guide](rdma_cluster/setup_guide.md)
 
 **Key Features:**
-*   **Custom RCCL Patch:** Use of a custom-built `librccl.so` to support RDMA on `gfx1151`.
+*   **RCCL validation:** TP=2 has been tested over both Ethernet and RDMA/RoCE.
 *   **Easy Setup:** `refresh_toolbox.sh` automatically detects and exposes RDMA devices.
 *   **Cluster Management:** Included `start-vllm-cluster` TUI for managing Ray and vLLM.
 
