@@ -35,7 +35,7 @@ def get_subnet_from_ip(ip):
     parts = ip.split('.')
     return f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
 
-def stop_cluster(worker_ip=None):
+def stop_cluster(worker_ip=None, toolbox_name="vllm-therock-gfx1151"):
     """
     Stops Ray locally and on the worker node if provided.
     """
@@ -45,15 +45,15 @@ def stop_cluster(worker_ip=None):
     if worker_ip:
         print(f"Stopping Ray cluster on worker ({worker_ip})...")
         ssh_cmd = [
-            "ssh", "-o", "StrictHostKeyChecking=no", worker_ip, 
-            "toolbox", "run", "-c", "vllm", "--", "ray", "stop", "--force"
+            "ssh", "-o", "StrictHostKeyChecking=no", worker_ip,
+            "toolbox", "run", "-c", toolbox_name, "--", "ray", "stop", "--force"
         ]
         try:
             subprocess.run(ssh_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except subprocess.CalledProcessError as e:
             print(f"Warning: Failed to stop worker node completely: {e}")
 
-def setup_worker_node(worker_ip, head_ip): 
+def setup_worker_node(worker_ip, head_ip, toolbox_name):
     subnet = get_subnet_from_ip(worker_ip)
     
     # Read overrides from current env
@@ -111,10 +111,10 @@ def setup_worker_node(worker_ip, head_ip):
     print(f"Setting up Worker Node ({worker_ip})...")
     
     # Use bash -s to read script from stdin
-    # Command: ssh user@host "toolbox run -c vllm -- bash -s"
+    # Command: ssh user@host "toolbox run -c <selected toolbox> -- bash -s"
     ssh_cmd = [
-        "ssh", "-o", "StrictHostKeyChecking=no", worker_ip, 
-        "toolbox run -c vllm -- bash -s"
+        "ssh", "-o", "StrictHostKeyChecking=no", worker_ip,
+        "toolbox", "run", "-c", toolbox_name, "--", "bash", "-s"
     ]
     
     try:
@@ -303,4 +303,3 @@ def nuke_vllm_cache_cluster(nodes=None):
         nuke_vllm_cache_on_node(node_ip, is_local)
 
     time.sleep(2)
-

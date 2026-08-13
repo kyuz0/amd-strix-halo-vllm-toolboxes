@@ -93,6 +93,9 @@ The image can be used both as:
 ./refresh_toolbox.sh dev      # bleeding edge
 ```
 
+By default these create separate toolboxes named `vllm-therock-gfx1151` and
+`vllm-therock-gfx1151-dev`, respectively. Set `TOOLBOX_NAME` to override the name.
+
 > **InfiniBand / RDMA Support:** The script automatically detects if a fast InfiniBand link is active (checks `/dev/infiniband`). If found, it correctly sets up the container to expose these devices, enabling high-performance clustering.
 
 **Manual Creation:**
@@ -100,7 +103,7 @@ The image can be used both as:
 To manually create a toolbox that exposes the GPU and relaxes seccomp:
 
 ```bash
-toolbox create vllm \
+toolbox create vllm-therock-gfx1151 \
   --image docker.io/kyuz0/vllm-therock-gfx1151:latest \
   -- --device /dev/dri --device /dev/kfd \
   --group-add keep-groups --security-opt seccomp=unconfined
@@ -114,7 +117,7 @@ toolbox create vllm \
 Enter it:
 
 ```bash
-toolbox enter vllm
+toolbox enter vllm-therock-gfx1151
 ```
 
 **Model storage:** Models are downloaded to `~/.cache/huggingface` by default. This directory is shared with the host if you created the toolbox correctly, so downloads persist.

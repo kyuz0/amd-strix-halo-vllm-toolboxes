@@ -2,7 +2,6 @@
 
 set -e
 
-TOOLBOX_NAME="${TOOLBOX_NAME:-vllm}"
 # Override only when intentionally testing another image repository.
 IMAGE_REPO="${IMAGE_REPO:-docker.io/kyuz0/vllm-therock-gfx1151}"
 
@@ -40,6 +39,15 @@ resolve_channel() {
 
 CHANNEL="$(resolve_channel "${1:-}")"
 IMAGE="${IMAGE_REPO}:${CHANNEL}"
+
+# Keep stable and development toolboxes side by side by default. An explicit
+# TOOLBOX_NAME still overrides this mapping.
+if [ "$CHANNEL" = "dev" ]; then
+    DEFAULT_TOOLBOX_NAME="vllm-therock-gfx1151-dev"
+else
+    DEFAULT_TOOLBOX_NAME="vllm-therock-gfx1151"
+fi
+TOOLBOX_NAME="${TOOLBOX_NAME:-$DEFAULT_TOOLBOX_NAME}"
 
 # Base options.
 #

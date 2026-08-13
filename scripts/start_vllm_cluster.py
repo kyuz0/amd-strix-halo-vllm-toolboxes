@@ -43,6 +43,11 @@ ATTENTION_BACKENDS = (
     "ROCM_AITER_UNIFIED_ATTN",
 )
 
+REMOTE_TOOLBOXES = (
+    ("vllm-therock-gfx1151", "latest"),
+    ("vllm-therock-gfx1151-dev", "dev"),
+)
+
 def get_discovered_models():
     """
     Overrides the hardcoded MODELS_TO_RUN by looking at what we actually have results for.
@@ -112,8 +117,8 @@ def nuke_vllm_cache(head_ip):
     local = cluster_manager.get_local_ip(rdma)
     cluster_manager.nuke_vllm_cache_on_node(local, is_local=True)
 
-def setup_worker_node(worker_ip, head_ip):
-    return cluster_manager.setup_worker_node(worker_ip, head_ip)
+def setup_worker_node(worker_ip, head_ip, toolbox_name):
+    return cluster_manager.setup_worker_node(worker_ip, head_ip, toolbox_name)
 
 def setup_head_node(head_ip):
     return cluster_manager.setup_head_node(head_ip)
@@ -419,6 +424,7 @@ def main():
     # Default IPs
     head_ip = os.getenv("VLLM_HEAD_IP", "192.168.100.1")
     worker_ip = os.getenv("VLLM_WORKER_IP", "192.168.100.2")
+    remote_toolbox = os.getenv("VLLM_REMOTE_TOOLBOX", REMOTE_TOOLBOXES[0][0])
     
     while True:
         # Main Menu
@@ -461,10 +467,11 @@ def main():
                 c_choice = run_dialog([
                     "--clear", "--backtitle", "AMD VLLM RCCL Cluster Manager",
                     "--title", "Cluster Network Configuration",
-                    "--menu", "Set Network Parameters before starting Ray:", "15", "65", "3",
+                    "--menu", "Set Network Parameters before starting Ray:", "17", "72", "4",
                     "1", f"Force Ethernet (Disable RDMA/RoCE):  {eth_status}",
                     "2", f"Enable NCCL Debug Logging:           {debug_status}",
-                    "3", "START CLUSTER"
+                    "3", f"Remote toolbox:                       {remote_toolbox}",
+                    "4", "START CLUSTER"
                 ])
                 if not c_choice: break
                 
@@ -473,6 +480,18 @@ def main():
                 elif c_choice == "2":
                     enable_nccl_debug = not enable_nccl_debug
                 elif c_choice == "3":
+                    toolbox_items = []
+                    for toolbox_name, channel in REMOTE_TOOLBOXES:
+                        toolbox_items.extend([toolbox_name, channel])
+                    selected_toolbox = run_dialog([
+                        "--title", "Select Remote Toolbox",
+                        "--default-item", remote_toolbox,
+                        "--menu", "Choose the toolbox on the worker host:",
+                        "12", "68", str(len(REMOTE_TOOLBOXES)),
+                    ] + toolbox_items)
+                    if selected_toolbox:
+                        remote_toolbox = selected_toolbox
+                elif c_choice == "4":
                     os.environ["NCCL_IB_DISABLE"] = "1" if force_ethernet else "0"
                     if enable_nccl_debug:
                         os.environ["NCCL_DEBUG"] = "INFO"
@@ -488,7 +507,7 @@ def main():
                         print("Head node started successfully. Waiting 5s before worker connection...")
                         time.sleep(5)
                         # 2. Start Worker
-                        if setup_worker_node(worker_ip, head_ip):
+                        if setup_worker_node(worker_ip, head_ip, remote_toolbox):
                             # 3. Wait for full cluster
                             wait_for_cluster()
                     input("Press Enter to continue...")
@@ -501,7 +520,7 @@ def main():
         elif choice == "3":
             subprocess.run(["clear"])
             print("= Stopping Ray Cluster =")
-            cluster_manager.stop_cluster(worker_ip)
+            cluster_manager.stop_cluster(worker_ip, remote_toolbox)
             input("\nPress Enter to continue...")
             
         elif choice == "4":
