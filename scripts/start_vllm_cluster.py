@@ -162,7 +162,7 @@ def get_verified_config(model_id, tp_size, max_seqs):
     except Exception as e:
         return default_config
 
-def configure_and_launch_vllm(model_idx, head_ip):
+def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
     model_id = MODELS_TO_RUN[model_idx]
     config = MODEL_TABLE[model_id]
     name = model_id.split("/")[-1]
@@ -207,7 +207,8 @@ def configure_and_launch_vllm(model_idx, head_ip):
         extra_flags_short = (extra_flags_display[:40] + '...') if len(extra_flags_display) > 43 else extra_flags_display
 
         menu_args = [
-            "--clear", "--backtitle", f"AMD VLLM CLUSTER Launcher (Head: {head_ip})",
+            "--clear", "--backtitle",
+            f"AMD VLLM CLUSTER Launcher (Head: {head_ip}, Worker: {remote_toolbox})",
             "--title", f"Configuration: {name}",
             "--menu", "Customize Launch Parameters:", "24", "70", "11",
             "1", f"Tensor Parallelism:   {current_tp} (Fixed)",
@@ -367,6 +368,7 @@ def configure_and_launch_vllm(model_idx, head_ip):
     
     print("\n" + "="*60)
     print(f" Launching VLLM Cluster on Head: {head_ip}")
+    print(f" Worker:    {remote_toolbox}")
     print(f" Model:     {name}")
     print(f" Config:    TP={current_tp} | Seqs={current_seqs} | Ctx={current_ctx}")
     print(f" Backend:   {current_attn_backend}")
@@ -428,35 +430,50 @@ def main():
     
     while True:
         # Main Menu
-        # 1. Configure IPs
-        # 2. Start Cluster (Ray)
-        # 3. Stop Ray Cluster
-        # 4. Ray Cluster Status
-        # 5. Launch VLLM Serve
-        # 6. Exit
+        # 1. Select worker toolbox
+        # 2. Configure IPs
+        # 3. Start Cluster (Ray)
+        # 4. Stop Ray Cluster
+        # 5. Ray Cluster Status
+        # 6. Launch VLLM Serve
+        # 7. Exit
         
         choice = run_dialog([
             "--clear", "--backtitle", "AMD VLLM RCCL Cluster Manager",
             "--title", "Main Menu",
-            "--menu", "Select Action:", "16", "60", "6",
-            "1", f"Configure IPs (Head: {head_ip}, Worker: {worker_ip})",
-            "2", "Start Ray Cluster",
-            "3", "Stop Ray Cluster",
-            "4", "Ray Cluster Status",
-            "5", "Launch VLLM Serve",
-            "6", "Exit"
+            "--menu", "Select Action:", "18", "76", "7",
+            "1", f"Select Target Toolbox ({remote_toolbox})",
+            "2", f"Configure IPs (Head: {head_ip}, Worker: {worker_ip})",
+            "3", "Start Ray Cluster",
+            "4", "Stop Ray Cluster",
+            "5", "Ray Cluster Status",
+            "6", "Launch VLLM Serve",
+            "7", "Exit"
         ])
         
-        if not choice or choice == "6":
+        if not choice or choice == "7":
             subprocess.run(["clear"])
             sys.exit(0)
             
         if choice == "1":
+            toolbox_items = []
+            for toolbox_name, channel in REMOTE_TOOLBOXES:
+                toolbox_items.extend([toolbox_name, channel])
+            selected_toolbox = run_dialog([
+                "--title", "Select Target Toolbox",
+                "--default-item", remote_toolbox,
+                "--menu", "Choose the toolbox on the worker host:",
+                "12", "68", str(len(REMOTE_TOOLBOXES)),
+            ] + toolbox_items)
+            if selected_toolbox:
+                remote_toolbox = selected_toolbox
+
+        elif choice == "2":
             res = setup_ips_dialog(head_ip, worker_ip)
             if res:
                 head_ip, worker_ip = res
-            
-        elif choice == "2":
+
+        elif choice == "3":
             force_ethernet = False
             enable_nccl_debug = False
             
@@ -467,11 +484,10 @@ def main():
                 c_choice = run_dialog([
                     "--clear", "--backtitle", "AMD VLLM RCCL Cluster Manager",
                     "--title", "Cluster Network Configuration",
-                    "--menu", "Set Network Parameters before starting Ray:", "17", "72", "4",
+                    "--menu", f"Worker toolbox: {remote_toolbox}", "15", "72", "3",
                     "1", f"Force Ethernet (Disable RDMA/RoCE):  {eth_status}",
                     "2", f"Enable NCCL Debug Logging:           {debug_status}",
-                    "3", f"Remote toolbox:                       {remote_toolbox}",
-                    "4", "START CLUSTER"
+                    "3", "START CLUSTER"
                 ])
                 if not c_choice: break
                 
@@ -480,18 +496,6 @@ def main():
                 elif c_choice == "2":
                     enable_nccl_debug = not enable_nccl_debug
                 elif c_choice == "3":
-                    toolbox_items = []
-                    for toolbox_name, channel in REMOTE_TOOLBOXES:
-                        toolbox_items.extend([toolbox_name, channel])
-                    selected_toolbox = run_dialog([
-                        "--title", "Select Remote Toolbox",
-                        "--default-item", remote_toolbox,
-                        "--menu", "Choose the toolbox on the worker host:",
-                        "12", "68", str(len(REMOTE_TOOLBOXES)),
-                    ] + toolbox_items)
-                    if selected_toolbox:
-                        remote_toolbox = selected_toolbox
-                elif c_choice == "4":
                     os.environ["NCCL_IB_DISABLE"] = "1" if force_ethernet else "0"
                     if enable_nccl_debug:
                         os.environ["NCCL_DEBUG"] = "INFO"
@@ -517,24 +521,24 @@ def main():
             subprocess.run(["ray", "status"])
             input("\nPress Enter to continue...")
             
-        elif choice == "3":
+        elif choice == "4":
             subprocess.run(["clear"])
             print("= Stopping Ray Cluster =")
             cluster_manager.stop_cluster(worker_ip, remote_toolbox)
             input("\nPress Enter to continue...")
             
-        elif choice == "4":
+        elif choice == "5":
             subprocess.run(["clear"])
             print("= Ray Cluster Status =")
             res = subprocess.run(["ray", "status"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             if res.returncode != 0:
                 print("\n[!] Cluster is Offline or Unreachable.")
-                print("Please start the cluster first via Option 2 (Start Ray Cluster).")
+                print("Please start the cluster first via Option 3 (Start Ray Cluster).")
             else:
                 print(res.stdout)
             input("\nPress Enter to continue...")
             
-        elif choice == "5":
+        elif choice == "6":
             # Select Model
             menu_items = []
             for i, m_id in enumerate(MODELS_TO_RUN):
@@ -547,7 +551,7 @@ def main():
             ] + menu_items)
             
             if m_choice:
-                configure_and_launch_vllm(int(m_choice), head_ip)
+                configure_and_launch_vllm(int(m_choice), head_ip, remote_toolbox)
                 # Note: execvpe replaces process, so we won't return here.
 
 if __name__ == "__main__":
