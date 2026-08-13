@@ -1,28 +1,9 @@
-import sys
 import re
 import site
 from pathlib import Path
 
 def patch_vllm():
     print("Applying Strix Halo patches to vLLM (ai-notes modernization)...")
-
-    # Patch 0: csrc/spinloop.cpp (clang-compatible mwaitx include)
-    # spinloop.cpp includes <mwaitxintrin.h> directly. ROCm clang rejects that
-    # with a hard #error ("Never use <mwaitxintrin.h> directly; include
-    # <x86intrin.h> instead."). GCC tolerates it, so vLLM upstream CI never sees
-    # the break — but this toolbox builds vLLM with CC/CXX=ROCm clang (for ABI
-    # alignment with PyTorch), so the spinloop target fails to compile.
-    # <x86intrin.h> is the umbrella header accepted by both compilers and still
-    # exposes the MONITORX/MWAITX intrinsics. Guarded so it no-ops once vLLM
-    # fixes it upstream or removes the file.
-    p_spinloop = Path('csrc/spinloop.cpp')
-    if p_spinloop.exists():
-        txt = p_spinloop.read_text()
-        if '#include <mwaitxintrin.h>' in txt:
-            txt = txt.replace('#include <mwaitxintrin.h>',
-                              '#include <x86intrin.h>')
-            p_spinloop.write_text(txt)
-            print(" -> Patched csrc/spinloop.cpp (mwaitxintrin.h -> x86intrin.h for clang)")
 
     # NOTE: the former Patch 1 / Patch 1.5 (comment out `import amdsmi`, stub it with a
     # MagicMock, and force the GCN arch to gfx1151) are GONE.
@@ -255,40 +236,6 @@ if _os.path.isdir(_jit_cache) and _jit_cache not in __path__:
     # oracle/mxfp4.py, and the only remaining `(11, 0)` match sits in a CUDA-only branch of
     # gpt_oss_triton_kernels_moe.py where our replace mis-fired (inert on ROCm, but a wrong
     # edit to the CUDA gate). Dropped entirely. (v0.26.0 audit.)
-
-    # Patch 11: RocmPlatform.is_integrated_gpu override (smart UMA detection)
-    # Upstream vLLM PR #35356 (merged 2026-04-13) added Platform.is_integrated_gpu()
-    # and made MemorySnapshot.measure() use psutil.virtual_memory().available for free
-    # memory on UMA devices (hipMemGetInfo ignores OS-reclaimable memory there -> free
-    # is over-reported -> over-allocation into swap; vLLM #35313, this repo's #65). But
-    # the override was implemented for CUDA only; RocmPlatform inherited the base False,
-    # so AMD APUs never took that path. HIP reports integrated=1 for gfx APUs (Strix
-    # Halo/Point, MI300A) and torch surfaces it as is_integrated (verified =1 on
-    # gfx1151), so mirror CudaPlatformBase. Replaces the former ROCM-21812 GTT/sysfs
-    # +8GiB heuristic (removed above): the 50% APU VRAM clamp it worked around is fixed
-    # in current ROCm (full GTT total is reported). No-ops once vLLM ships a ROCm
-    # override upstream.
-    p_rocm_isint = Path('vllm/platforms/rocm.py')
-    if p_rocm_isint.exists():
-        txt = p_rocm_isint.read_text()
-        if 'def is_integrated_gpu' not in txt and 'class RocmPlatform(Platform):' in txt:
-            method = (
-                '    @classmethod\n'
-                '    def is_integrated_gpu(cls, device_id: int = 0) -> bool:\n'
-                '        # AMD APUs (Strix Halo/Point, MI300A) are UMA: HIP reports\n'
-                '        # integrated=1, surfaced by torch as is_integrated. Mirrors\n'
-                '        # CudaPlatformBase so MemorySnapshot uses the psutil free-memory\n'
-                '        # path on unified memory (avoids over-allocation / swap).\n'
-                '        try:\n'
-                '            return bool(torch.cuda.get_device_properties(device_id).is_integrated)\n'
-                '        except Exception:\n'
-                '            return False\n\n'
-            )
-            head, sep, tail = txt.partition('class RocmPlatform(Platform):')
-            tail = tail.replace('    @classmethod\n', method + '    @classmethod\n', 1)
-            txt = head + sep + tail
-            p_rocm_isint.write_text(txt)
-            print(" -> Patched vllm/platforms/rocm.py (RocmPlatform.is_integrated_gpu UMA override)")
 
     print("Successfully patched vLLM/Environment for Strix Halo.")
 

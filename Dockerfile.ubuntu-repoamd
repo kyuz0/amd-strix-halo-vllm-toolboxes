@@ -14,6 +14,28 @@
 #
 # BASE = 24.04 / py3.12: 26.04 ships py3.14 but vLLM's amd-quark dep has no py3.14 wheel yet.
 
+# ============================ RDMA userspace ============================
+# Ubuntu 24.04 ships rdma-core 50/libirdma rdmav34. With the current host irdma
+# driver it reports RDMA_WRITE_WITH_IMM receives as plain IBV_WC_RECV, which
+# RCCL rejects as an unknown completion. rdma-core 62 was validated on the same
+# two-node gfx1151 setup with a clean RCCL all-reduce over RoCE.
+FROM docker.io/ubuntu:24.04 AS rdma-builder
+ARG RDMA_CORE_REF=v62.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git ca-certificates python3 build-essential cmake ninja-build pkg-config \
+      libudev-dev libnl-3-dev libnl-route-3-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN git clone --branch "${RDMA_CORE_REF}" --depth 1 \
+      https://github.com/linux-rdma/rdma-core.git /opt/rdma-core && \
+    cmake -S /opt/rdma-core -B /opt/rdma-core/build -GNinja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/usr \
+      -DCMAKE_INSTALL_LIBDIR=lib/x86_64-linux-gnu \
+      -DNO_MAN_PAGES=1 \
+      -DNO_PYVERBS=1 && \
+    ninja -C /opt/rdma-core/build && \
+    DESTDIR=/opt/rdma-core-install ninja -C /opt/rdma-core/build install
+
 # ============================ Stage 1: builder ============================
 FROM docker.io/ubuntu:24.04 AS builder
 ENV DEBIAN_FRONTEND=noninteractive FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE
@@ -96,11 +118,20 @@ ENV MAX_JOBS=${MAX_JOBS} PYTORCH_ROCM_ARCH=gfx1151 VLLM_TARGET_DEVICE=rocm \
     HIP_FORCE_DEV_KERNARG=1 MIOPEN_FIND_MODE=FAST
 WORKDIR /opt
 RUN git clone https://github.com/vllm-project/vllm.git /opt/vllm && \
-    cd /opt/vllm && if [ -n "$VLLM_REF" ]; then git checkout "$VLLM_REF"; fi
+    cd /opt/vllm && \
+    if [ -n "$VLLM_REF" ]; then git checkout "$VLLM_REF"; fi && \
+    python -c 'from setuptools_scm import get_version; print(get_version())' \
+      > /tmp/vllm-upstream-version
 WORKDIR /opt/vllm
 COPY scripts/patch_strix.py /opt/vllm/patch_strix.py
 RUN python /opt/vllm/patch_strix.py
 RUN ROOT=$(rocm-sdk path --root) && \
+    UPSTREAM_VERSION=$(cat /tmp/vllm-upstream-version) && \
+    case "$UPSTREAM_VERSION" in \
+      *+*) VLLM_BUILD_VERSION="${UPSTREAM_VERSION}.strix" ;; \
+      *)   VLLM_BUILD_VERSION="${UPSTREAM_VERSION}+strix" ;; \
+    esac && \
+    echo "Building patched vLLM ${VLLM_BUILD_VERSION} from upstream ${UPSTREAM_VERSION}" && \
     export ROCM_PATH=$ROOT HIP_PATH=$ROOT \
       PATH=$ROOT/bin:$ROOT/lib/llvm/bin:$PATH \
       CC=$ROOT/lib/llvm/bin/amdclang CXX=$ROOT/lib/llvm/bin/amdclang++ \
@@ -108,7 +139,8 @@ RUN ROOT=$(rocm-sdk path --root) && \
       CMAKE_PREFIX_PATH=$ROOT/lib/cmake:$ROOT \
       LD_LIBRARY_PATH=$ROOT/lib:$ROOT/lib/llvm/lib && \
     export CMAKE_ARGS="-DROCM_PATH=$ROOT -DHIP_PATH=$ROOT -DAMDGPU_TARGETS=gfx1151 -DHIP_ARCHITECTURES=gfx1151" && \
-    python -m pip wheel --no-build-isolation --no-deps -w /tmp/dist -v . && \
+    VLLM_VERSION_OVERRIDE="$VLLM_BUILD_VERSION" \
+      python -m pip wheel --no-build-isolation --no-deps -w /tmp/dist -v . && \
     python -m pip freeze \
       | grep -E '^(amd-torch-device-gfx1151|torch|torchaudio|torchvision|triton)==' \
       > /tmp/rocm-stack.constraints && \
@@ -116,6 +148,7 @@ RUN ROOT=$(rocm-sdk path --root) && \
     TRITON_BEFORE=$(python -c 'import triton; print(triton.__version__)') && \
     python -m pip install -c /tmp/rocm-stack.constraints -r requirements/rocm.txt && \
     python -m pip install --no-deps /tmp/dist/*.whl && \
+    test "$(python -c 'import importlib.metadata as m; print(m.version("vllm"))')" = "$VLLM_BUILD_VERSION" && \
     test "$(python -c 'import torch; print(torch.__version__)')" = "$TORCH_BEFORE" && \
     test "$(python -c 'import triton; print(triton.__version__)')" = "$TRITON_BEFORE" && \
     rm -rf /tmp/dist /tmp/rocm-stack.constraints
@@ -148,6 +181,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libgoogle-perftools4 libibverbs1 librdmacm1 dialog openssh-client iproute2 procps \
       numactl ibverbs-utils rdma-core perftest infiniband-diags iputils-ping iperf3 pciutils rsync \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Overlay the tested current verbs/provider stack on Ubuntu's old v50 packages.
+# Keeping the distro packages installed supplies the runtime utilities and loader
+# integration; libibverbs v62 selects the matching new libirdma provider ABI.
+COPY --from=rdma-builder /opt/rdma-core-install/ /
+RUN ldconfig && \
+    test -f /usr/lib/x86_64-linux-gnu/libibverbs/libirdma-rdmav59.so
 
 # Container-workflow compatibility (toolbx / distrobox / plain `podman run --group-add ...`).
 #  * Ubuntu 24.04 reserves UID 1000 for its stock `ubuntu` user. Toolbx creates the host user
