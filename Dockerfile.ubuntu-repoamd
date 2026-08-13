@@ -176,7 +176,7 @@ LABEL com.github.containers.toolbox="true" \
 # git: aiter/flash_attn call git for version detection at import.
 # sudo: toolbx/distrobox run their in-container user setup through it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3.12 python3.12-dev gcc g++ make git ca-certificates curl sudo libcap2-bin libnss-myhostname \
+      python3.12 python3.12-dev gcc g++ make git vim ca-certificates curl sudo libcap2-bin libnss-myhostname \
       libatomic1 libnuma1 libgomp1 libelf1 libdrm2 libdrm-amdgpu1 libtinfo6 zlib1g libssl3 \
       libgoogle-perftools4 libibverbs1 librdmacm1 dialog openssh-client iproute2 procps \
       numactl ibverbs-utils rdma-core perftest infiniband-diags iputils-ping iperf3 pciutils rsync \
