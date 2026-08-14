@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import cluster_manager  # noqa: E402
 import models  # noqa: E402
+import patch_strix  # noqa: E402
 
 
 AITER_UNSET = "unset VLLM_ROCM_USE_AITER VLLM_ROCM_USE_AITER_LINEAR"
@@ -64,6 +65,29 @@ class ClusterEnvironmentTests(unittest.TestCase):
     def test_legacy_cluster_script_also_sanitizes_both_ray_daemons(self):
         script = (ROOT / "scripts" / "configure_cluster.sh").read_text()
         self.assertEqual(script.count(AITER_UNSET), 2)
+
+    def test_strix_patch_refreshes_aiter_after_ray_applies_worker_env(self):
+        source = """\
+class RayWorkerProc:
+    def initialize_worker(self, env_vars):
+        for key, value in env_vars.items():
+            os.environ[key] = value
+
+        self.local_rank = 0
+"""
+        with patch("patch_strix.Path.read_text", return_value=source), patch(
+            "patch_strix.Path.write_text"
+        ) as write_text:
+            executor = Path("vllm/v1/executor/ray_executor_v2.py")
+            patch_strix.patch_ray_executor_aiter_env(executor)
+            patched = write_text.call_args.args[0]
+
+        refresh = "rocm_aiter_ops.refresh_env_variables()"
+        self.assertEqual(patched.count(refresh), 1)
+        self.assertLess(
+            patched.index('os.environ[key] = value'), patched.index(refresh)
+        )
+        self.assertLess(patched.index(refresh), patched.index("self.local_rank = 0"))
 
 
 if __name__ == "__main__":

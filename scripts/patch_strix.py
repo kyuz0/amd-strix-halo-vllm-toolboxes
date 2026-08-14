@@ -2,6 +2,32 @@ import re
 import site
 from pathlib import Path
 
+
+def patch_ray_executor_aiter_env(p_ray_executor):
+    """Refresh vLLM's cached AITER policy after Ray applies worker env vars."""
+    txt = p_ray_executor.read_text()
+    refresh_marker = "rocm_aiter_ops.refresh_env_variables()"
+    if refresh_marker not in txt:
+        env_anchor = (
+            "        for key, value in env_vars.items():\n"
+            "            os.environ[key] = value\n"
+        )
+        if txt.count(env_anchor) != 1:
+            raise RuntimeError(
+                "Unsupported RayExecutorV2 initialize_worker() layout; "
+                "refusing to build without refreshing the late AITER environment"
+            )
+        env_refresh = env_anchor + (
+            "\n"
+            "        if current_platform.is_rocm():\n"
+            "            from vllm._aiter_ops import rocm_aiter_ops\n"
+            "\n"
+            "            rocm_aiter_ops.refresh_env_variables()\n"
+        )
+        txt = txt.replace(env_anchor, env_refresh, 1)
+        p_ray_executor.write_text(txt)
+
+
 def patch_vllm():
     print("Applying Strix Halo patches to vLLM (ai-notes modernization)...")
 
@@ -120,6 +146,22 @@ def patch_vllm():
             txt = txt.replace(old_gate, new_gate, 1)
             path.write_text(txt)
         print(f" -> Patched {path} (AITER FP8 linear gate respected)")
+
+    # Patch 2.6: RayExecutorV2 creates each actor before it copies the driver's
+    # environment into that worker. _aiter_ops is imported during actor startup
+    # and snapshots every VLLM_ROCM_USE_AITER* value into class attributes, so
+    # applying the model environment later is otherwise invisible to AITER. This
+    # is fatal for DeepSeek V4's sparse indexer: the process environment says
+    # AITER=1, while rocm_aiter_ops.is_enabled() keeps returning the value cached
+    # at import time. Refresh the documented cache immediately after Ray applies
+    # the final worker environment.
+    p_ray_executor = Path("vllm/v1/executor/ray_executor_v2.py")
+    if p_ray_executor.exists():
+        patch_ray_executor_aiter_env(p_ray_executor)
+        print(
+            " -> Patched vllm/v1/executor/ray_executor_v2.py "
+            "(refreshed late Ray worker AITER environment)"
+        )
 
     # Patch 3.5: unquantized.py (Hard-block AITER MoE forced override on gfx1x)
     p_unquant = Path('vllm/model_executor/layers/fused_moe/oracle/unquantized.py')

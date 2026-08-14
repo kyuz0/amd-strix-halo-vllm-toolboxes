@@ -125,6 +125,10 @@ RUN git clone https://github.com/vllm-project/vllm.git /opt/vllm && \
 WORKDIR /opt/vllm
 COPY scripts/patch_strix.py /opt/vllm/patch_strix.py
 RUN python /opt/vllm/patch_strix.py
+RUN grep -q "rocm_aiter_ops.refresh_env_variables()" \
+      /opt/vllm/vllm/v1/executor/ray_executor_v2.py \
+    || { echo "ERROR: Ray workers will retain the AITER policy cached before model env propagation."; \
+         exit 1; }
 RUN ROOT=$(rocm-sdk path --root) && \
     UPSTREAM_VERSION=$(cat /tmp/vllm-upstream-version) && \
     case "$UPSTREAM_VERSION" in \
