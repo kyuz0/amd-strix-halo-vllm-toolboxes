@@ -72,6 +72,7 @@ def setup_worker_node(worker_ip, head_ip, toolbox_name):
     echo "export RAY_DISABLE_METRICS=1"
     echo "export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1"
     echo "export RAY_memory_monitor_refresh_ms=0"
+    echo "export TRITON_CACHE_DIR=$HOME/.cache/triton"
     echo "export VLLM_HOST_IP={worker_ip}"
     echo "export RDMA_IFACE=$RDMA_IFACE"
     echo "export NCCL_SOCKET_IFNAME=$RDMA_IFACE"
@@ -83,6 +84,8 @@ def setup_worker_node(worker_ip, head_ip, toolbox_name):
     export RAY_DISABLE_METRICS=1
     export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1
     export RAY_memory_monitor_refresh_ms=0
+    export TRITON_CACHE_DIR="$HOME/.cache/triton"
+    mkdir -p "$TRITON_CACHE_DIR"
     export VLLM_HOST_IP={worker_ip}
     export RDMA_IFACE=$RDMA_IFACE
     export NCCL_SOCKET_IFNAME=$RDMA_IFACE
@@ -144,6 +147,7 @@ def setup_head_node(head_ip):
     echo "export RAY_DISABLE_METRICS=1"
     echo "export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1"
     echo "export RAY_memory_monitor_refresh_ms=0"
+    echo "export TRITON_CACHE_DIR=$HOME/.cache/triton"
     echo "export VLLM_HOST_IP={head_ip}"
     echo "export RDMA_IFACE=$RDMA_IFACE"
     echo "export NCCL_SOCKET_IFNAME=$RDMA_IFACE"
@@ -155,6 +159,8 @@ def setup_head_node(head_ip):
     export RAY_DISABLE_METRICS=1
     export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1
     export RAY_memory_monitor_refresh_ms=0
+    export TRITON_CACHE_DIR="$HOME/.cache/triton"
+    mkdir -p "$TRITON_CACHE_DIR"
     export VLLM_HOST_IP={head_ip}
     export RDMA_IFACE=$RDMA_IFACE
     export NCCL_SOCKET_IFNAME=$RDMA_IFACE

@@ -9,7 +9,7 @@ name: build-ubuntu-stable
 # (TheRock multi-arch device-package layout, ROCm 7.14). torch brings its own matched ROCm ->
 # no system-vs-pip ABI mismatch. Vision works via a ROCm flash-attention + aiter build (ViT
 # Flash Attention, not the SDPA path that OOMs). First serve autotunes the Triton GDN+ViT
-# kernels on the GPU (a few min); mount a host dir at TRITON_CACHE_DIR to persist that cache.
+# kernels on the GPU (a few min); the launchers keep that cache under the host-shared HOME.
 #
 # Fully AUTO-DISCOVERED — no manual pins: the resolve step finds the newest torch on the index
 # that has a COMPLETE aligned gfx1151 set (torch + device + torchvision + torchaudio, same rocm),

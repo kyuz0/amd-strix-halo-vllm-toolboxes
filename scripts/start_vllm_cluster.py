@@ -48,6 +48,16 @@ REMOTE_TOOLBOXES = (
     ("vllm-therock-gfx1151-dev", "dev"),
 )
 
+DEFAULT_TRITON_CACHE_DIR = Path.home() / ".cache" / "triton"
+
+
+def get_triton_cache_dir():
+    """Return a host-persistent per-user Triton cache path."""
+    configured = os.getenv("TRITON_CACHE_DIR")
+    if configured and configured != "/opt/triton_cache":
+        return Path(configured).expanduser()
+    return DEFAULT_TRITON_CACHE_DIR
+
 def get_discovered_models():
     """
     Overrides the hardcoded MODELS_TO_RUN by looking at what we actually have results for.
@@ -330,6 +340,7 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
     print(f"Detected RDMA Interface: {rdma_iface}")
     
     env = os.environ.copy()
+    env["TRITON_CACHE_DIR"] = str(get_triton_cache_dir())
     env.pop("VLLM_ROCM_USE_AITER", None)
     env.update(config.get("env", {}))
     env["RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES"] = "1"
@@ -380,6 +391,7 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
     print("\n --- Environment Variables ---")
     vars_to_print = [
         "RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES",
+        "TRITON_CACHE_DIR",
         "VLLM_HOST_IP",
         "NCCL_SOCKET_IFNAME",
         "NCCL_IB_GID_INDEX",

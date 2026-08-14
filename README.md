@@ -140,6 +140,8 @@ start-vllm
 ```
 
 > **Cache note:** vLLM writes compiled kernels to `~/.cache/vllm/`.
+> Triton kernels and autotuning results are stored in `~/.cache/triton/`, so they survive
+> toolbox replacement and image upgrades.
 
 ---
 

@@ -43,6 +43,16 @@ ATTENTION_BACKENDS = (
     "ROCM_AITER_UNIFIED_ATTN",
 )
 
+DEFAULT_TRITON_CACHE_DIR = Path.home() / ".cache" / "triton"
+
+
+def get_triton_cache_dir():
+    """Return a host-persistent per-user Triton cache path."""
+    configured = os.getenv("TRITON_CACHE_DIR")
+    if configured and configured != "/opt/triton_cache":
+        return Path(configured).expanduser()
+    return DEFAULT_TRITON_CACHE_DIR
+
 def detect_gpus():
     """Detects AMD GPUs via rocm-smi or /dev/dri."""
     try:
@@ -146,7 +156,7 @@ def reset_compiled_caches():
     """Clear vLLM, Triton, and AITER compiled caches for a cold rebuild."""
     caches = [
         ("vLLM", Path.home() / ".cache" / "vllm"),
-        ("Triton", Path("/opt/triton_cache")),
+        ("Triton", get_triton_cache_dir()),
         ("AITER", Path.home() / ".aiter"),
     ]
 
@@ -157,7 +167,7 @@ def reset_compiled_caches():
 
         try:
             print(f"Clearing {label} cache at {cache}...", end="", flush=True)
-            # Keep the cache root itself: /opt/triton_cache may be a mount point.
+            # Keep the cache root itself in case the user mounted it explicitly.
             for entry in cache.iterdir():
                 if entry.is_dir() and not entry.is_symlink():
                     shutil.rmtree(entry)
@@ -300,7 +310,7 @@ def configure_and_launch(model_idx, gpu_count):
                     "This performs a cold rebuild by clearing:\n\n"
                     "~/.cache/vllm - vLLM/torch.compile graphs\n"
                     "  Reset after vLLM/PyTorch changes or graph/compile errors.\n\n"
-                    "/opt/triton_cache - Triton kernels and autotuning results\n"
+                    "~/.cache/triton - Triton kernels and autotuning results\n"
                     "  Reset after Triton/PyTorch/ROCm/backend changes or kernel errors.\n\n"
                     "~/.aiter - AITER JIT kernels\n"
                     "  Reset after AITER/ROCm/backend changes or AITER JIT errors.\n\n"
@@ -366,6 +376,7 @@ def configure_and_launch(model_idx, gpu_count):
     
     # Env Vars
     env = os.environ.copy()
+    env["TRITON_CACHE_DIR"] = str(get_triton_cache_dir())
     # Attention backend selection is independent from the broad AITER operator
     # toggle. Model-specific env overrides (notably DeepSeek V4) are applied below.
     env.pop("VLLM_ROCM_USE_AITER", None)
