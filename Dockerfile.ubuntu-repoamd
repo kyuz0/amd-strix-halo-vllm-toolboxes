@@ -124,7 +124,12 @@ RUN git clone https://github.com/vllm-project/vllm.git /opt/vllm && \
       > /tmp/vllm-upstream-version
 WORKDIR /opt/vllm
 COPY scripts/patch_strix.py /opt/vllm/patch_strix.py
+COPY scripts/patch_dsv4_gfx1x.py /opt/vllm/patch_dsv4_gfx1x.py
 RUN python /opt/vllm/patch_strix.py
+RUN grep -q "PATCHED: gfx1x portable sparse-indexer MQA" \
+      /opt/vllm/vllm/v1/attention/ops/rocm_aiter_mla_sparse.py \
+    && grep -q "PATCHED: gfx1x block-FP8 GEMM uses BF16 tl.dot" \
+      /opt/vllm/vllm/model_executor/layers/quantization/utils/fp8_utils.py
 RUN grep -q "rocm_aiter_ops.refresh_env_variables()" \
       /opt/vllm/vllm/v1/executor/ray_executor_v2.py \
     || { echo "ERROR: Ray workers will retain the AITER policy cached before model env propagation."; \

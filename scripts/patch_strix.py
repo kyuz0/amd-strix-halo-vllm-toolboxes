@@ -2,6 +2,8 @@ import re
 import site
 from pathlib import Path
 
+from patch_dsv4_gfx1x import patch_dsv4_gfx1x
+
 
 def patch_ray_executor_aiter_env(p_ray_executor):
     """Refresh vLLM's cached AITER policy after Ray applies worker env vars."""
@@ -146,6 +148,16 @@ def patch_vllm():
             txt = txt.replace(old_gate, new_gate, 1)
             path.write_text(txt)
         print(f" -> Patched {path} (AITER FP8 linear gate respected)")
+
+    # Patch 2.55: gfx1151 cannot execute native FP8 matrix-core dot products.
+    # AITER's sparse-indexer prefill kernel spins after compilation, the stock
+    # paged fallback misreads vLLM's shuffled cache, and Triton's block-scaled
+    # FP8 linear fallback spends minutes lowering raw FP8 dot into LLVM. Keep
+    # FP8 storage, but route only gfx1x dot products through BF16 matrix cores.
+    # The paged sparse kernel uses the exact SHUFFLE layout written by
+    # indexer_k_quant_and_cache_triton for block_size > 1.
+    for patched_path in patch_dsv4_gfx1x():
+        print(f" -> Patched {patched_path} (gfx1x portable FP8 dot path)")
 
     # Patch 2.6: RayExecutorV2 creates each actor before it copies the driver's
     # environment into that worker. _aiter_ops is imported during actor startup
