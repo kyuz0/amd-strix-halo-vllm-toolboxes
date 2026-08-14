@@ -326,7 +326,7 @@ This toolbox supports clustering multiple Strix Halo nodes using Ethernet or RDM
 
 ## 8) AITER on Strix Halo Support Status
 
-This toolbox uses only the AITER paths verified on Strix Halo (gfx1151). The broad `VLLM_ROCM_USE_AITER` toggle stays disabled by default because it also enables unsupported operators such as the AITER sampler.
+This toolbox uses only the AITER paths verified on Strix Halo (gfx1151). The image and Ray daemons do not set model-specific AITER policy. At serve time, the launcher explicitly keeps the broad `VLLM_ROCM_USE_AITER` toggle disabled for normal model profiles because it also enables unsupported operators such as the AITER sampler; DeepSeek V4 enables only its validated policy.
 
 To bypass this limitation, `scripts/patch_strix.py` applies a few APU-specific guards (building on the work from `ai-notes` linked above):
 * **Patch 2 (`vllm/_aiter_ops.py`)**: Intercepts the MoE gate (`is_fused_moe_enabled()`) forcing it to disable AITER MoE and Linear FP8 on `gfx1x` architectures.

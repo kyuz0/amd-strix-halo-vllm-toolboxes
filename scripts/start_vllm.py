@@ -377,14 +377,13 @@ def configure_and_launch(model_idx, gpu_count):
     # Env Vars
     env = os.environ.copy()
     env["TRITON_CACHE_DIR"] = str(get_triton_cache_dir())
-    # Attention backend selection is independent from the broad AITER operator
-    # toggle. Model-specific env overrides (notably DeepSeek V4) are applied below.
-    env.pop("VLLM_ROCM_USE_AITER", None)
 
     if not attention_backend_locked:
         cmd.extend(["--attention-backend", current_attn_backend])
 
-    env.update(config.get("env", {}))
+    # Keep the image and Ray daemons model-neutral. Apply explicit defaults here,
+    # then let validated model policy (notably DeepSeek V4) override them.
+    env.update(models.get_model_env(config))
 
     print("\n" + "="*60)
     print(f" Launching: {name}")

@@ -53,6 +53,10 @@ setup_head() {
     echo "Configuring Head Node..."
     ray stop --force
 
+    # Ray workers must not inherit model-specific AITER policy. vLLM propagates
+    # the selected model's values from the driver after the actors are created.
+    unset VLLM_ROCM_USE_AITER VLLM_ROCM_USE_AITER_LINEAR
+
     # Critical Config
     export RAY_DISABLE_METRICS=1
     export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1
@@ -77,6 +81,10 @@ setup_head() {
 setup_worker() {
     echo "Configuring Worker Node..."
     ray stop --force
+
+    # Ray workers must not inherit model-specific AITER policy. vLLM propagates
+    # the selected model's values from the driver after the actors are created.
+    unset VLLM_ROCM_USE_AITER VLLM_ROCM_USE_AITER_LINEAR
 
     # Critical Config
     export RAY_DISABLE_METRICS=1

@@ -64,6 +64,10 @@ def setup_worker_node(worker_ip, head_ip, toolbox_name):
     source /etc/profile
     # Silence the kill command
     ray stop --force > /dev/null 2>&1 || true
+
+    # RayExecutorV2 applies driver model variables with setdefault. Keep the
+    # daemon model-neutral so the selected model can supply its own AITER policy.
+    unset VLLM_ROCM_USE_AITER VLLM_ROCM_USE_AITER_LINEAR
     
     # Calculate Interface dynamically
     RDMA_IFACE=$(ip -o addr show to {subnet} | awk '{{print $2}}' | head -n1)
@@ -72,6 +76,7 @@ def setup_worker_node(worker_ip, head_ip, toolbox_name):
     echo "export RAY_DISABLE_METRICS=1"
     echo "export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1"
     echo "export RAY_memory_monitor_refresh_ms=0"
+    echo "unset VLLM_ROCM_USE_AITER VLLM_ROCM_USE_AITER_LINEAR"
     echo "export TRITON_CACHE_DIR=$HOME/.cache/triton"
     echo "export VLLM_HOST_IP={worker_ip}"
     echo "export RDMA_IFACE=$RDMA_IFACE"
@@ -139,6 +144,10 @@ def setup_head_node(head_ip):
     script = f"""
     # Silence the kill command
     ray stop --force > /dev/null 2>&1 || true
+
+    # RayExecutorV2 applies driver model variables with setdefault. Keep the
+    # daemon model-neutral so the selected model can supply its own AITER policy.
+    unset VLLM_ROCM_USE_AITER VLLM_ROCM_USE_AITER_LINEAR
     
     # Calculate Interface dynamically
     RDMA_IFACE=$(ip -o addr show to {subnet} | awk '{{print $2}}' | head -n1)
@@ -147,6 +156,7 @@ def setup_head_node(head_ip):
     echo "export RAY_DISABLE_METRICS=1"
     echo "export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1"
     echo "export RAY_memory_monitor_refresh_ms=0"
+    echo "unset VLLM_ROCM_USE_AITER VLLM_ROCM_USE_AITER_LINEAR"
     echo "export TRITON_CACHE_DIR=$HOME/.cache/triton"
     echo "export VLLM_HOST_IP={head_ip}"
     echo "export RDMA_IFACE=$RDMA_IFACE"

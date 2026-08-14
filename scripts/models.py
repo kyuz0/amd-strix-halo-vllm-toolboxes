@@ -1,3 +1,14 @@
+DEFAULT_MODEL_ENV = {
+    "VLLM_ROCM_USE_AITER": "0",
+    "VLLM_ROCM_USE_AITER_LINEAR": "0",
+}
+
+
+def get_model_env(config):
+    """Return explicit per-serve defaults plus model-specific overrides."""
+    return DEFAULT_MODEL_ENV | config.get("env", {})
+
+
 MODEL_TABLE = {
     # 1. Llama 3.1 8B Instruct
     # MAD uses 131k tokens. We scale to 32k for 32GB VRAM safety.
