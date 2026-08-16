@@ -125,8 +125,11 @@ RUN git clone https://github.com/vllm-project/vllm.git /opt/vllm && \
 WORKDIR /opt/vllm
 COPY scripts/patch_strix.py /opt/vllm/patch_strix.py
 COPY scripts/patch_dsv4_gfx1x.py /opt/vllm/patch_dsv4_gfx1x.py
+COPY scripts/gfx1x_tilelang_mqa.py /opt/vllm/vllm/v1/attention/ops/gfx1x_tilelang_mqa.py
 RUN python /opt/vllm/patch_strix.py
-RUN grep -q "PATCHED: gfx1x portable sparse-indexer MQA" \
+RUN python -m py_compile \
+      /opt/vllm/vllm/v1/attention/ops/gfx1x_tilelang_mqa.py \
+    && grep -q "PATCHED: gfx1x TileLang sparse-indexer MQA" \
       /opt/vllm/vllm/v1/attention/ops/rocm_aiter_mla_sparse.py \
     && grep -q "PATCHED: gfx1x block-FP8 GEMM uses BF16 tl.dot" \
       /opt/vllm/vllm/model_executor/layers/quantization/utils/fp8_utils.py
@@ -160,6 +163,7 @@ RUN ROOT=$(rocm-sdk path --root) && \
     test "$(python -c 'import importlib.metadata as m; print(m.version("vllm"))')" = "$VLLM_BUILD_VERSION" && \
     test "$(python -c 'import torch; print(torch.__version__)')" = "$TORCH_BEFORE" && \
     test "$(python -c 'import triton; print(triton.__version__)')" = "$TRITON_BEFORE" && \
+    python -c "import importlib.util; assert importlib.util.find_spec('tilelang')" && \
     rm -rf /tmp/dist /tmp/rocm-stack.constraints
 RUN python -m pip install ray
 
