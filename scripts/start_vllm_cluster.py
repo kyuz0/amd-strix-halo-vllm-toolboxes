@@ -22,6 +22,7 @@ else:
     sys.path.append(str(SCRIPT_DIR))
 
 try:
+    import launcher_features
     import models
     MODEL_TABLE = models.MODEL_TABLE
     MODELS_TO_RUN = models.MODELS_TO_RUN
@@ -189,6 +190,8 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
     clear_cache = True  # Default ON: stale graphs from version upgrades cause crashes
     # Default to eager mode for stability in cluster situations, unless explicitly disabled
     use_eager = config.get("enforce_eager", True)
+    use_speculative = config.get("speculative_config") is not None
+    use_warmup = config.get("warmup") is not None
     trust_remote = True # Default True as per request
     configured_attn_backend = config.get("attention_backend", "TRITON_ATTN")
     attention_backend_locked = configured_attn_backend is None
@@ -211,6 +214,8 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
         cache_status = "YES" if clear_cache else "NO"
         eager_status = "YES" if use_eager else "NO"
         trust_status = "YES" if trust_remote else "NO"
+        speculative_status = "YES" if use_speculative else "NO"
+        warmup_status = "YES" if use_warmup else "NO"
 
         extra_flags_display = ' '.join(current_extra_flags) if current_extra_flags else '(none)'
         # Truncate display for menu readability
@@ -220,7 +225,7 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
             "--clear", "--backtitle",
             f"AMD VLLM CLUSTER Launcher (Head: {head_ip}, Worker: {remote_toolbox})",
             "--title", f"Configuration: {name}",
-            "--menu", "Customize Launch Parameters:", "24", "70", "11",
+            "--menu", "Customize Launch Parameters:", "27", "70", "13",
             "1", f"Tensor Parallelism:   {current_tp} (Fixed)",
             "2", f"Concurrent Requests:  {current_seqs}",
             "3", f"Context Length:       {current_ctx}",
@@ -229,8 +234,10 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
             "6", f"Attention Backend:    {current_attn_backend}",
             "7", f"Erase vLLM Cache:     {cache_status}",
             "8", f"Force Eager Mode:     {eager_status}",
-            "9", f"Extra vLLM Flags:     {extra_flags_short}",
-            "10", "LAUNCH SERVER"
+            "9", f"Speculative Decoding: {speculative_status}",
+            "10", f"Automatic Warmup:    {warmup_status}",
+            "11", f"Extra vLLM Flags:    {extra_flags_short}",
+            "12", "LAUNCH SERVER"
         ]
         
         choice = run_dialog(menu_args)
@@ -303,6 +310,14 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
             use_eager = not use_eager
 
         elif choice == "9":
+            if config.get("speculative_config") is not None:
+                use_speculative = not use_speculative
+
+        elif choice == "10":
+            if config.get("warmup") is not None:
+                use_warmup = not use_warmup
+
+        elif choice == "11":
             # Edit Extra vLLM Flags
             current_str = ' '.join(current_extra_flags)
             new_flags = run_dialog([
@@ -315,7 +330,7 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
             if new_flags is not None:  # None = cancelled
                 current_extra_flags = new_flags.split() if new_flags.strip() else []
 
-        elif choice == "10":
+        elif choice == "12":
             break
             
     # Build Command
@@ -374,6 +389,10 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
     if trust_remote: cmd.append("--trust-remote-code")
     if use_eager: cmd.append("--enforce-eager")
 
+    cmd.extend(
+        launcher_features.speculative_config_args(config, use_speculative)
+    )
+
     # Extra vLLM flags (from models.py defaults + user edits)
     if current_extra_flags:
         cmd.extend(current_extra_flags)
@@ -384,6 +403,8 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
     print(f" Model:     {name}")
     print(f" Config:    TP={current_tp} | Seqs={current_seqs} | Ctx={current_ctx}")
     print(f" Backend:   {current_attn_backend}")
+    print(f" Speculate: {'native DSpark block' if use_speculative else 'disabled'}")
+    print(f" Warmup:    {'automatic' if use_warmup else 'disabled'}")
     if use_eager:
         print(" Note:      Eager Mode Enabled (Recommended for Cluster Stability)")
     if current_extra_flags:
@@ -408,7 +429,11 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
             
     print(f"\n Command:   {' '.join(cmd)}")
     print("="*60 + "\n")
-    
+
+    if use_warmup:
+        launcher_features.launch_automatic_warmup(
+            model_id, PORT, config, env
+        )
     # Exec
     os.execvpe("vllm", cmd, env)
 

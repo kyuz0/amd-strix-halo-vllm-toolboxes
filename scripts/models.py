@@ -98,7 +98,7 @@ MODEL_TABLE = {
     # launch recipe.
     "deepseek-ai/DeepSeek-V4-Flash-0731": {
         "trust_remote": True,
-        "valid_tp": [1],
+        "valid_tp": [1, 2],
         "enforce_eager": True,
         # The ROCm DeepSeek-V4 model hardwires its own sparse MLA backend
         # (ROCM_FLASHMLA_SPARSE_DSV4); generic --attention-backend is inapplicable.
@@ -111,6 +111,21 @@ MODEL_TABLE = {
         "ctx": "262144",
         "max_num_seqs": "1",
         "max_tokens": "256",
+        # vLLM v0.27.1 has a native AMD DSpark speculator. It reuses DFlash's
+        # block-parallel machinery, then applies DSpark's sequential Markov head.
+        # Keep this explicit so both launchers expose a clean on/off toggle.
+        "speculative_config": {
+            "method": "dspark",
+            "num_speculative_tokens": 5,
+            "disable_padded_drafter_batch": True,
+            "enforce_eager": True,
+        },
+        # Runs after the OpenAI API becomes ready. The tiny request exercises
+        # decode/DSpark; the longer request warms chunked prefill/TileLang kernels.
+        "warmup": {
+            "prompt_tokens": 2048,
+            "ready_timeout_seconds": 1200,
+        },
         "extra_flags": [
             "--kv-cache-dtype", "fp8",
             "--block-size", "256",

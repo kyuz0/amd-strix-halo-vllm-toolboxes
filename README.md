@@ -336,3 +336,24 @@ To bypass this limitation, `scripts/patch_strix.py` applies a few APU-specific g
 The launcher exposes the exact generic backend names: `TRITON_ATTN`, `ROCM_ATTN`, and `ROCM_AITER_UNIFIED_ATTN`. `Qwen/Qwen3.6-35B-A3B` defaults to the gfx1151-verified unified AITER backend with the broad AITER toggle disabled. The legacy `ROCM_AITER_FA` backend is not offered because its paged-attention decode kernel has no Navi implementation.
 
 DeepSeek V4 is separate: its ROCm model implementation hardwires the model-specific `ROCM_FLASHMLA_SPARSE_DSV4` backend, so the launcher does not pass `--attention-backend`. Its model entry enables AITER for the tested sparse-indexer MQA-logits helper, disables AITER linear, and uses `--logprobs-mode processed_logprobs` to avoid the unsupported sampler.
+
+## 9) DeepSeek V4 DSpark and automatic warmup
+
+`deepseek-ai/DeepSeek-V4-Flash-0731` now defaults to vLLM's native AMD DSpark
+five-token block speculative path. DSpark reuses the DFlash block-parallel
+machinery and adds its trained sequential Markov head. Both launchers expose
+**Speculative Decoding** as a per-launch toggle; disabling it restores the
+target-only path.
+
+The launchers also default **Automatic Warmup** on for this model. Once the API
+is ready, a best-effort local helper sends a tiny decode request and a longer
+prefill request. This compiles and persists the kernels before the first real
+benchmark or user request. On TP=2 the single head request executes across both
+Ray ranks, warming both nodes' host-persistent caches.
+
+This image carries several narrow gfx1151 and DeepSeek patches. Their exact
+upstream paths, provenance, feature gates, omitted older patches, and required
+upgrade checks are maintained in
+[docs/VLLM_PATCH_MANIFEST.md](docs/VLLM_PATCH_MANIFEST.md). Treat that document
+as a required checklist before changing the pinned vLLM, ROCm, PyTorch, AITER,
+TileLang, or RDMA-core versions.

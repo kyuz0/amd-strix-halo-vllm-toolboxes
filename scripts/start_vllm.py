@@ -23,6 +23,7 @@ else:
     sys.path.append(str(SCRIPT_DIR))
 
 try:
+    import launcher_features
     import models
     MODEL_TABLE = models.MODEL_TABLE
     MODELS_TO_RUN = models.MODELS_TO_RUN
@@ -198,6 +199,8 @@ def configure_and_launch(model_idx, gpu_count):
     
     clear_cache = False  # Keep compiled kernels on normal launches; reset only when needed
     use_eager = config.get("enforce_eager", False) # Default to model config, usually False
+    use_speculative = config.get("speculative_config") is not None
+    use_warmup = config.get("warmup") is not None
     configured_attn_backend = config.get("attention_backend", "TRITON_ATTN")
     attention_backend_locked = configured_attn_backend is None
     if attention_backend_locked:
@@ -220,6 +223,8 @@ def configure_and_launch(model_idx, gpu_count):
     while True:
         cache_status = "YES" if clear_cache else "NO"
         eager_status = "YES" if use_eager else "NO"
+        speculative_status = "YES" if use_speculative else "NO"
+        warmup_status = "YES" if use_warmup else "NO"
         
         extra_flags_display = ' '.join(current_extra_flags) if current_extra_flags else '(none)'
         # Truncate display for menu readability
@@ -228,7 +233,7 @@ def configure_and_launch(model_idx, gpu_count):
         menu_args = [
             "--clear", "--backtitle", f"AMD Strix Halo vLLM Launcher (GPUs: {gpu_count})",
             "--title", f"Configuration: {name}",
-            "--menu", "Customize Launch Parameters:", "24", "70", "10",
+            "--menu", "Customize Launch Parameters:", "26", "70", "12",
             "1", f"Tensor Parallelism:   {current_tp}",
             "2", f"Concurrent Requests:  {current_seqs}",
             "3", f"Context Length:       {current_ctx} (Verified)",
@@ -236,8 +241,10 @@ def configure_and_launch(model_idx, gpu_count):
             "5", f"Attention Backend:    {current_attn_backend}",
             "6", f"Reset Compiled Caches:{cache_status:>5}",
             "7", f"Force Eager Mode:     {eager_status}",
-            "8", f"Extra vLLM Flags:     {extra_flags_short}",
-            "9", "LAUNCH SERVER"
+            "8", f"Speculative Decoding: {speculative_status}",
+            "9", f"Automatic Warmup:     {warmup_status}",
+            "10", f"Extra vLLM Flags:    {extra_flags_short}",
+            "11", "LAUNCH SERVER"
         ]
         
         choice = run_dialog(menu_args)
@@ -334,6 +341,14 @@ def configure_and_launch(model_idx, gpu_count):
             use_eager = not use_eager
 
         elif choice == "8":
+            if config.get("speculative_config") is not None:
+                use_speculative = not use_speculative
+
+        elif choice == "9":
+            if config.get("warmup") is not None:
+                use_warmup = not use_warmup
+
+        elif choice == "10":
             # Edit Extra vLLM Flags
             current_str = ' '.join(current_extra_flags)
             new_flags = run_dialog([
@@ -346,7 +361,7 @@ def configure_and_launch(model_idx, gpu_count):
             if new_flags is not None:  # None = cancelled
                 current_extra_flags = new_flags.split() if new_flags.strip() else []
               
-        elif choice == "9":
+        elif choice == "11":
             # Launch
             break
             
@@ -370,6 +385,10 @@ def configure_and_launch(model_idx, gpu_count):
     if config.get("trust_remote"): cmd.append("--trust-remote-code")
     if use_eager: cmd.append("--enforce-eager")
 
+    cmd.extend(
+        launcher_features.speculative_config_args(config, use_speculative)
+    )
+
     # Extra vLLM flags (from models.py defaults + user edits)
     if current_extra_flags:
         cmd.extend(current_extra_flags)
@@ -389,6 +408,8 @@ def configure_and_launch(model_idx, gpu_count):
     print(f" Launching: {name}")
     print(f" Config:    TP={current_tp} | Seqs={current_seqs} | Ctx={current_ctx} | Util={current_util}")
     print(f" Backend:   {current_attn_backend}")
+    print(f" Speculate: {'native DSpark block' if use_speculative else 'disabled'}")
+    print(f" Warmup:    {'automatic' if use_warmup else 'disabled'}")
     if clear_cache:
         print(" Action:    Resetting vLLM, Triton, and AITER compiled caches")
     if current_extra_flags:
@@ -403,7 +424,11 @@ def configure_and_launch(model_idx, gpu_count):
             
     print(f"\n Command:   {' '.join(cmd)}")
     print("="*60 + "\n")
-    
+
+    if use_warmup:
+        launcher_features.launch_automatic_warmup(
+            model_id, PORT, config, env
+        )
     os.execvpe("vllm", cmd, env)
 
 def main():

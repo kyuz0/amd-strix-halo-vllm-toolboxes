@@ -112,7 +112,10 @@ RUN set -e; ROOT=$(rocm-sdk path --root); \
     cd /opt && rm -rf /opt/flash-attention /tmp/aiter_dist
 
 # Build vLLM from source against the pip rocm-sdk (matched to torch → no ABI mix).
-ARG VLLM_REF=eb28452b1
+# Audited v0.27.1 commit. The GitHub workflow may override this with the
+# resolved latest stable release; verify_vllm_compat.py then fails closed if
+# the native DeepSeek/DSpark interfaces moved.
+ARG VLLM_REF=6e448d0ea9bf3d88d898b65449ca6dc2aec170ac
 ARG MAX_JOBS=4
 ENV MAX_JOBS=${MAX_JOBS} PYTORCH_ROCM_ARCH=gfx1151 VLLM_TARGET_DEVICE=rocm \
     HIP_FORCE_DEV_KERNARG=1 MIOPEN_FIND_MODE=FAST
@@ -125,8 +128,10 @@ RUN git clone https://github.com/vllm-project/vllm.git /opt/vllm && \
 WORKDIR /opt/vllm
 COPY scripts/patch_strix.py /opt/vllm/patch_strix.py
 COPY scripts/patch_dsv4_gfx1x.py /opt/vllm/patch_dsv4_gfx1x.py
+COPY scripts/verify_vllm_compat.py /opt/vllm/verify_vllm_compat.py
 COPY scripts/gfx1x_tilelang_mqa.py /opt/vllm/vllm/v1/attention/ops/gfx1x_tilelang_mqa.py
-RUN python /opt/vllm/patch_strix.py
+RUN python /opt/vllm/patch_strix.py && \
+    python /opt/vllm/verify_vllm_compat.py
 RUN python -m py_compile \
       /opt/vllm/vllm/v1/attention/ops/gfx1x_tilelang_mqa.py \
     && grep -q "PATCHED: gfx1x TileLang sparse-indexer MQA" \
@@ -254,9 +259,12 @@ COPY scripts/99-toolbox-banner.sh /etc/profile.d/99-toolbox-banner.sh
 COPY scripts/zz-venv-last.sh /etc/profile.d/zz-venv-last.sh
 COPY scripts/start_vllm.py /opt/start-vllm
 COPY scripts/start_vllm_cluster.py /opt/start-vllm-cluster
+COPY scripts/launcher_features.py /opt/launcher_features.py
+COPY scripts/vllm_warmup.py /opt/vllm_warmup.py
 COPY scripts/measure_bandwidth.sh /opt/measure_bandwidth.sh
 COPY scripts/cluster_manager.py /opt/cluster_manager.py
 COPY scripts/models.py /opt/models.py
+COPY docs/VLLM_PATCH_MANIFEST.md /opt/VLLM_PATCH_MANIFEST.md
 COPY benchmarks/max_context_results.json /opt/max_context_results.json
 COPY benchmarks/bench_utils.py /opt/bench_utils.py
 COPY benchmarks/run_vllm_bench.py /opt/run_vllm_bench.py
@@ -266,7 +274,9 @@ COPY rdma_cluster/compare_eth_vs_rdma.sh /opt/compare_eth_vs_rdma.sh
 COPY scripts/configure_cluster.sh /opt/configure_cluster.sh
 
 RUN chmod 0644 /etc/profile.d/*.sh /opt/max_context_results.json /opt/models.py \
+      /opt/VLLM_PATCH_MANIFEST.md \
  && chmod +x /opt/start-vllm /opt/start-vllm-cluster /opt/run_vllm_bench.py \
+      /opt/vllm_warmup.py \
       /opt/vllm_cluster_bench.py /opt/find_max_context.py /opt/measure_bandwidth.sh \
       /opt/compare_eth_vs_rdma.sh /opt/configure_cluster.sh \
  && ln -s /opt/start-vllm /usr/local/bin/start-vllm \
