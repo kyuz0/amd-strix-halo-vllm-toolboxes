@@ -36,7 +36,8 @@ class NativeDSparkIntegrationTests(unittest.TestCase):
         config = models.MODEL_TABLE[MODEL_ID]
         speculative = config["speculative_config"]
         self.assertEqual(speculative["method"], "dspark")
-        self.assertEqual(speculative["num_speculative_tokens"], 5)
+        self.assertEqual(speculative["num_speculative_tokens"], 7)
+        self.assertEqual(speculative["draft_sample_method"], "greedy")
         self.assertTrue(speculative["disable_padded_drafter_batch"])
         self.assertTrue(speculative["enforce_eager"])
         self.assertEqual(config["warmup"]["prompt_tokens"], 2048)

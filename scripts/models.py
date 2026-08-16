@@ -113,12 +113,14 @@ MODEL_TABLE = {
         "ctx": "262144",
         "max_num_seqs": "1",
         "max_tokens": "256",
-        # vLLM v0.27.1 has a native AMD DSpark speculator. It reuses DFlash's
-        # block-parallel machinery, then applies DSpark's sequential Markov head.
-        # Keep this explicit so both launchers expose a clean on/off toggle.
+        # Native AMD DSpark reuses DFlash's block-parallel machinery, then
+        # applies DSpark's sequential Markov head. DeepSeek's official 0731
+        # recipe uses K7 greedy drafting; keep the local unpadded/eager policy
+        # explicit so both launchers expose the validated clean on/off toggle.
         "speculative_config": {
             "method": "dspark",
-            "num_speculative_tokens": 5,
+            "num_speculative_tokens": 7,
+            "draft_sample_method": "greedy",
             "disable_padded_drafter_batch": True,
             "enforce_eager": True,
         },

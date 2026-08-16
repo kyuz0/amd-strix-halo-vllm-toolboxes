@@ -19,10 +19,11 @@ class LauncherFeatureTests(unittest.TestCase):
     def setUp(self):
         self.config = models.MODEL_TABLE[MODEL_ID]
 
-    def test_deepseek_defaults_to_native_dspark5_and_automatic_warmup(self):
+    def test_deepseek_defaults_to_native_dspark7_greedy_and_automatic_warmup(self):
         speculative = self.config["speculative_config"]
         self.assertEqual(speculative["method"], "dspark")
-        self.assertEqual(speculative["num_speculative_tokens"], 5)
+        self.assertEqual(speculative["num_speculative_tokens"], 7)
+        self.assertEqual(speculative["draft_sample_method"], "greedy")
         self.assertTrue(speculative["disable_padded_drafter_batch"])
         self.assertTrue(speculative["enforce_eager"])
         self.assertEqual(self.config["warmup"]["prompt_tokens"], 2048)

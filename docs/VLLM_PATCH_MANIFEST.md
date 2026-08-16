@@ -42,7 +42,7 @@ Update this baseline after completing the runtime matrix below.
    local source test as an image or GPU validation.
 6. On gfx1151, validate cold and warm starts for:
    - single-host DeepSeek V4 with speculation disabled;
-   - single-host DeepSeek V4 with native DSpark-5;
+   - single-host DeepSeek V4 with native DSpark K7 greedy drafting;
    - TP=2 over Ethernet;
    - TP=2 over RDMA/RoCE;
    - at least one non-DeepSeek model with the normal AITER policy.
@@ -93,10 +93,12 @@ Tests: `tests/test_dsv4_gfx1x_patch.py`.
 ## Native DSpark / DFlash block speculation
 
 The model is `deepseek-ai/DeepSeek-V4-Flash-0731`. The launcher passes native
-vLLM configuration with `method=dspark`, five speculative tokens, unpadded
-draft batches, and eager draft execution. DSpark reuses vLLM's DFlash
-block-parallel machinery, then samples left-to-right with its trained Markov
-head. There is deliberately no local DSpark model implementation or vLLM patch.
+vLLM configuration with `method=dspark`, seven speculative tokens, greedy draft
+sampling, unpadded draft batches, and eager draft execution. K7 greedy matches
+DeepSeek's official 0731 vLLM recipe; the unpadded/eager settings remain local
+gfx1151 launch policy. DSpark reuses vLLM's DFlash block-parallel machinery,
+then samples left-to-right with its trained Markov head. There is deliberately
+no local DSpark model implementation or vLLM patch.
 
 This differs from the older
 [AlexKGwyn/ds4-vllm-public](https://github.com/AlexKGwyn/ds4-vllm-public/tree/71a73d0c1ad42a51e8d4da7b3585a217917a4637)
