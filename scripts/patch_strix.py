@@ -6,10 +6,28 @@ from patch_dsv4_gfx1x import patch_dsv4_gfx1x
 
 
 def patch_ray_executor_aiter_env(p_ray_executor):
-    """Refresh vLLM's cached AITER policy after Ray applies worker env vars."""
+    """Refresh cached model policy after Ray applies worker env vars."""
     txt = p_ray_executor.read_text()
-    refresh_marker = "rocm_aiter_ops.refresh_env_variables()"
-    if refresh_marker not in txt:
+    aiter_refresh = "rocm_aiter_ops.refresh_env_variables()"
+    w8a8_refresh = "refresh_gfx1x_w8a8_env()"
+    if w8a8_refresh not in txt:
+        w8a8_block = (
+            "            from vllm.model_executor.kernels.linear.scaled_mm.triton "
+            "import (\n"
+            "                refresh_gfx1x_w8a8_env,\n"
+            "            )\n"
+            "\n"
+            "            refresh_gfx1x_w8a8_env()\n"
+        )
+        if aiter_refresh in txt:
+            txt = txt.replace(
+                f"            {aiter_refresh}\n",
+                f"            {aiter_refresh}\n" + w8a8_block,
+                1,
+            )
+            p_ray_executor.write_text(txt)
+            return
+
         env_anchor = (
             "        for key, value in env_vars.items():\n"
             "            os.environ[key] = value\n"
@@ -17,7 +35,7 @@ def patch_ray_executor_aiter_env(p_ray_executor):
         if txt.count(env_anchor) != 1:
             raise RuntimeError(
                 "Unsupported RayExecutorV2 initialize_worker() layout; "
-                "refusing to build without refreshing the late AITER environment"
+                "refusing to build without refreshing late model environment policy"
             )
         env_refresh = env_anchor + (
             "\n"
@@ -25,6 +43,7 @@ def patch_ray_executor_aiter_env(p_ray_executor):
             "            from vllm._aiter_ops import rocm_aiter_ops\n"
             "\n"
             "            rocm_aiter_ops.refresh_env_variables()\n"
+            + w8a8_block
         )
         txt = txt.replace(env_anchor, env_refresh, 1)
         p_ray_executor.write_text(txt)
@@ -160,19 +179,17 @@ def patch_vllm():
         print(f" -> Patched {patched_path} (gfx1x portable FP8 dot path)")
 
     # Patch 2.6: RayExecutorV2 creates each actor before it copies the driver's
-    # environment into that worker. _aiter_ops is imported during actor startup
-    # and snapshots every VLLM_ROCM_USE_AITER* value into class attributes, so
-    # applying the model environment later is otherwise invisible to AITER. This
-    # is fatal for DeepSeek V4's sparse indexer: the process environment says
-    # AITER=1, while rocm_aiter_ops.is_enabled() keeps returning the value cached
-    # at import time. Refresh the documented cache immediately after Ray applies
-    # the final worker environment.
+    # environment into that worker. _aiter_ops and the gfx1x W8A8 dispatcher can
+    # both be imported during actor startup and cache stale defaults. Refresh
+    # both policies immediately after Ray applies the final worker environment;
+    # otherwise the launch log can advertise a model override that TP workers
+    # never use.
     p_ray_executor = Path("vllm/v1/executor/ray_executor_v2.py")
     if p_ray_executor.exists():
         patch_ray_executor_aiter_env(p_ray_executor)
         print(
             " -> Patched vllm/v1/executor/ray_executor_v2.py "
-            "(refreshed late Ray worker AITER environment)"
+            "(refreshed late Ray worker model environment)"
         )
 
     # Patch 3.5: unquantized.py (Hard-block AITER MoE forced override on gfx1x)

@@ -107,6 +107,8 @@ MODEL_TABLE = {
         "env": {
             "VLLM_ROCM_USE_AITER": "1",
             "VLLM_ROCM_USE_AITER_LINEAR": "0",
+            "VLLM_GFX1X_W8A8_BF16": "1",
+            "VLLM_GFX1X_W8A8_BF16_DIRECT": "1",
         },
         "ctx": "262144",
         "max_num_seqs": "1",
@@ -128,8 +130,13 @@ MODEL_TABLE = {
         },
         "extra_flags": [
             "--kv-cache-dtype", "fp8",
+            # The BF16 weight cache is populated after vLLM's memory profile.
+            # Pin KV so automatic sizing does not consume the cache headroom.
+            "--kv-cache-memory-bytes", "6442450944",
             "--block-size", "256",
-            "--max-num-batched-tokens", "256",
+            # Avoid throttling chunked prefill to 256-token scheduler steps.
+            # Start conservatively for TP=2; larger values need RCCL profiling.
+            "--max-num-batched-tokens", "512",
             "--logprobs-mode", "processed_logprobs",
         ]
     },

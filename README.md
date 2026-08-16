@@ -337,6 +337,17 @@ The launcher exposes the exact generic backend names: `TRITON_ATTN`, `ROCM_ATTN`
 
 DeepSeek V4 is separate: its ROCm model implementation hardwires the model-specific `ROCM_FLASHMLA_SPARSE_DSV4` backend, so the launcher does not pass `--attention-backend`. Its model entry enables AITER for the tested sparse-indexer MQA-logits helper, disables AITER linear, and uses `--logprobs-mode processed_logprobs` to avoid the unsupported sampler.
 
+The DeepSeek profile also enables a gfx1151-only cached-BF16 W8A8 linear path,
+adapted from `AlexKGwyn/ds4-vllm-public`. FP8 weights remain the stored model
+format, but small-M decode dequantizes each used weight once, caches the BF16
+copy, and dispatches through vLLM's ROCm skinny GEMM while passing the original
+BF16 activation directly. This avoids repeated activation quantization and the
+generic block-FP8 Triton decode path. Because the cache is populated after
+startup profiling, the profile pins KV cache memory to 6 GiB per rank rather
+than allowing automatic KV sizing to consume the required headroom. This path
+changes floating-point numerics and must be benchmarked and quality-checked;
+the current Ubuntu-image performance warning still applies.
+
 ## 9) DeepSeek V4 DSpark and automatic warmup
 
 `deepseek-ai/DeepSeek-V4-Flash-0731` now defaults to vLLM's native AMD DSpark

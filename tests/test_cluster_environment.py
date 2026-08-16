@@ -36,6 +36,8 @@ class ClusterEnvironmentTests(unittest.TestCase):
         )
         self.assertEqual(deepseek["VLLM_ROCM_USE_AITER"], "1")
         self.assertEqual(deepseek["VLLM_ROCM_USE_AITER_LINEAR"], "0")
+        self.assertEqual(deepseek["VLLM_GFX1X_W8A8_BF16"], "1")
+        self.assertEqual(deepseek["VLLM_GFX1X_W8A8_BF16_DIRECT"], "1")
 
     def test_both_launchers_apply_the_selected_model_environment(self):
         expected = "env.update(models.get_model_env(config))"
@@ -66,7 +68,7 @@ class ClusterEnvironmentTests(unittest.TestCase):
         script = (ROOT / "scripts" / "configure_cluster.sh").read_text()
         self.assertEqual(script.count(AITER_UNSET), 2)
 
-    def test_strix_patch_refreshes_aiter_after_ray_applies_worker_env(self):
+    def test_strix_patch_refreshes_cached_policy_after_ray_applies_worker_env(self):
         source = """\
 class RayWorkerProc:
     def initialize_worker(self, env_vars):
@@ -83,10 +85,14 @@ class RayWorkerProc:
             patched = write_text.call_args.args[0]
 
         refresh = "rocm_aiter_ops.refresh_env_variables()"
+        w8a8_refresh = "refresh_gfx1x_w8a8_env()"
         self.assertEqual(patched.count(refresh), 1)
+        self.assertEqual(patched.count(w8a8_refresh), 1)
         self.assertLess(
             patched.index('os.environ[key] = value'), patched.index(refresh)
         )
+        self.assertLess(patched.index(refresh), patched.index(w8a8_refresh))
+        self.assertLess(patched.index(w8a8_refresh), patched.index("self.local_rank = 0"))
         self.assertLess(patched.index(refresh), patched.index("self.local_rank = 0"))
 
 

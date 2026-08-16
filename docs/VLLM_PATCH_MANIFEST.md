@@ -51,22 +51,42 @@ Update this baseline after completing the runtime matrix below.
    concurrency. A server that merely stays up is not a performance validation.
 8. Verify that `~/.cache/triton` and `~/.aiter` persist on both Ray nodes and
    that automatic warmup completes after the API becomes ready.
+9. For the cached-BF16 W8A8 path, record target-only throughput before testing
+   DSpark, confirm `[gfx1x_w8a8] BF16 direct path active` on every TP rank,
+   compare output quality against the stock path, and record peak host memory.
+   The BF16 copy changes numerics and is allocated after vLLM memory profiling.
 
-## DeepSeek V4 gfx1151 and TileLang
+## DeepSeek V4 gfx1151, TileLang, and cached-BF16 W8A8
 
 Owned by `scripts/patch_dsv4_gfx1x.py` and
-`scripts/gfx1x_tilelang_mqa.py`.
+the packaged `scripts/gfx1x_tilelang_mqa.py` and
+`scripts/gfx1x_w8a8_bf16.py` helpers.
 
 | Upstream path | Local behavior | Update audit |
 |---|---|---|
 | `vllm/v1/attention/ops/rocm_aiter_mla_sparse.py` | Routes prefill and paged sparse-indexer MQA logits to the local TileLang implementation on gfx1x. Other GPUs retain upstream dispatch. | Check whether upstream has a gfx11/gfx1151 sparse-indexer path, whether cache layout or function signatures changed, and whether speculative verification still passes `next_n > 1` correctly. |
 | `vllm/model_executor/layers/quantization/utils/fp8_utils.py` | Keeps FP8 storage but converts gfx1x block-scaled matrix operands to BF16 for `tl.dot`; gfx1151 has no native FP8 matrix-core dot. | Check the block-scaled GEMM implementation, config construction, scale semantics, and any new upstream RDNA fallback. Remove when upstream avoids raw FP8 dot on gfx1x. |
+| `vllm/model_executor/kernels/linear/scaled_mm/triton.py` | When the DeepSeek-only environment gate is enabled on gfx1x, bypasses activation FP8 quantization and routes block-scaled linear calls to a cached BF16 weight. If the cache is unavailable, the original quantized-input and Triton paths remain intact. | Recheck `TritonFp8BlockScaledMMKernel`, `FP8BlockParams`, `weight_group_shape`, bias/cast/reshape ordering, Ray environment timing, and the stock fallback. Remove when upstream provides a performant RDNA block-FP8 or cached dequantized path. |
+| `vllm/v1/executor/ray_executor_v2.py` | Refreshes the latched W8A8 environment gate after Ray copies model variables into an already-created worker, beside the existing AITER refresh. | Check when actor imports occur relative to `initialize_worker(env_vars)`. Both TP ranks must log the active path; printed driver environment alone is insufficient. |
 | new `vllm/v1/attention/ops/gfx1x_tilelang_mqa.py` | TileLang BF16 sparse-indexer GEMM, paged-cache de-shuffle, bounded KV buckets, and speculative-row causal bounds. Adapted from AlexKGwyn/ds4-vllm-public. | Compare with the current upstream sparse indexer and the source project's latest `ds4_tl_indexer.py`. Revalidate page layout, query shape, FP8 scale interpretation, context bucketing, and `next_n`. |
+| new `vllm/model_executor/kernels/linear/scaled_mm/gfx1x_w8a8_bf16.py` | Caches each block-dequantized BF16 weight, sends small-M decode through `rocm_unquantized_gemm_impl`/gfx1x skinny GEMM, and optionally reuses warm weights for prefill. Adapted from AlexKGwyn/ds4-vllm-public. | Revalidate scale orientation and dtype, weight layout, skinny-GEMM dispatch, cache lifetime, temporary FP32 peak, BF16 cache size, output quality, and cold/warm behavior. Never infer end-to-end speed from the source project's per-kernel claim. |
 
 Build markers:
 
 - `PATCHED: gfx1x TileLang sparse-indexer MQA`
 - `PATCHED: gfx1x block-FP8 GEMM uses BF16 tl.dot`
+- `PATCHED: gfx1x cached-BF16 W8A8 linear`
+
+The DeepSeek model profile enables `VLLM_GFX1X_W8A8_BF16=1` and
+`VLLM_GFX1X_W8A8_BF16_DIRECT=1`. Other models and non-gfx1x GPUs retain the
+stock path. Setting the base flag to `0` is the full rollback for a manual
+serve; setting only the direct flag to `0` retains the cached-BF16
+quantized-input fallback. The launcher also pins the per-rank KV pool to
+6 GiB with `--kv-cache-memory-bytes 6442450944`: the BF16 cache is deliberately
+created only by small-M decode after startup profiling, so automatic KV sizing
+would otherwise consume its headroom. Revalidate that pin whenever model
+weights, context policy, cache layout, or the number of concurrent sequences
+changes.
 
 Tests: `tests/test_dsv4_gfx1x_patch.py`.
 

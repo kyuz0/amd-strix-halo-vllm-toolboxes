@@ -94,6 +94,45 @@ def w8a8_triton_block_scaled_mm(A, B, block_size):
 '''
 
 
+TRITON_LINEAR_SOURCE = '''\
+import torch
+
+from vllm import _custom_ops as ops
+from vllm.platforms import current_platform
+
+from .ScaledMMLinearKernel import (
+    Int8ScaledMMLinearLayerConfig,
+)
+
+
+class TritonInt8ScaledMMLinearKernel:
+    pass
+
+
+class TritonFp8BlockScaledMMKernel:
+    def apply_block_scaled_mm(
+        self,
+        A: torch.Tensor,
+        B: torch.Tensor,
+        As: torch.Tensor,
+        Bs: torch.Tensor,
+    ) -> torch.Tensor:
+        pass
+
+
+def _w8a8_triton_block_scaled_mm_func(
+    qx, weight, x_scale, weight_scale, block_size, output_dtype,
+):
+    from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+        w8a8_triton_block_scaled_mm,
+    )
+
+    return w8a8_triton_block_scaled_mm(
+        qx, weight, x_scale, weight_scale, block_size, output_dtype
+    )
+'''
+
+
 class DeepSeekV4Gfx1xPatchTests(unittest.TestCase):
     def test_sparse_patch_routes_both_mqa_paths_only_on_gfx1x(self):
         with tempfile.TemporaryDirectory() as td:
@@ -146,6 +185,35 @@ class DeepSeekV4Gfx1xPatchTests(unittest.TestCase):
             )
             self.assertEqual(path.read_text(), patched)
 
+    def test_cached_bf16_patch_is_gfx1x_scoped_and_retains_stock_fallback(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "triton.py"
+            path.write_text(TRITON_LINEAR_SOURCE)
+
+            self.assertTrue(
+                patch_dsv4_gfx1x.patch_cached_bf16_w8a8_linear(path)
+            )
+            patched = path.read_text()
+
+            self.assertIn(patch_dsv4_gfx1x.CACHED_LINEAR_MARKER, patched)
+            self.assertIn("def refresh_gfx1x_w8a8_env()", patched)
+            self.assertIn(
+                'os.environ.get("VLLM_GFX1X_W8A8_BF16") == "1"', patched
+            )
+            self.assertIn("and _on_gfx1x()", patched)
+            self.assertIn("w8a8_block_bf16_direct(", patched)
+            self.assertIn("w8a8_block_fp8_bf16(", patched)
+            self.assertIn(
+                "return super().apply_weights(layer, x, bias, **kwargs)", patched
+            )
+            self.assertIn("return w8a8_triton_block_scaled_mm(", patched)
+            ast.parse(patched)
+
+            self.assertFalse(
+                patch_dsv4_gfx1x.patch_cached_bf16_w8a8_linear(path)
+            )
+            self.assertEqual(path.read_text(), patched)
+
     def test_patch_fails_closed_when_upstream_anchor_changes(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "fp8_utils.py"
@@ -167,6 +235,19 @@ class DeepSeekV4Gfx1xPatchTests(unittest.TestCase):
         self.assertIn("_KV_BUCKET = 512", source)
         self.assertIn("_PREFILL_KV_BUCKET = 8192", source)
 
+    def test_cached_bf16_helper_has_bounded_cold_cache_and_skinny_dispatch(self):
+        helper = ROOT / "scripts/gfx1x_w8a8_bf16.py"
+        source = helper.read_text()
+
+        ast.parse(source)
+        self.assertIn("AlexKGwyn/ds4-vllm-public", source)
+        self.assertIn("_MAX_COLD_CACHE_ROWS = 32", source)
+        self.assertIn("if rows > _MAX_COLD_CACHE_ROWS", source)
+        self.assertIn("_BF16_WEIGHT_CACHE[key] = cached", source)
+        self.assertIn("def w8a8_block_bf16_direct(", source)
+        self.assertIn("def w8a8_block_fp8_bf16(", source)
+        self.assertIn("rocm_unquantized_gemm_impl", source)
+
     def test_ubuntu_image_copies_helpers_before_running_main_patcher(self):
         dockerfile = (ROOT / "Dockerfile.ubuntu-repoamd").read_text()
         helper_copy = (
@@ -176,13 +257,23 @@ class DeepSeekV4Gfx1xPatchTests(unittest.TestCase):
             "COPY scripts/gfx1x_tilelang_mqa.py "
             "/opt/vllm/vllm/v1/attention/ops/gfx1x_tilelang_mqa.py"
         )
+        w8a8_copy = (
+            "COPY scripts/gfx1x_w8a8_bf16.py "
+            "/opt/vllm/vllm/model_executor/kernels/linear/scaled_mm/"
+            "gfx1x_w8a8_bf16.py"
+        )
         run_patch = "RUN python /opt/vllm/patch_strix.py"
         self.assertIn(helper_copy, dockerfile)
         self.assertIn(tilelang_copy, dockerfile)
+        self.assertIn(w8a8_copy, dockerfile)
         self.assertLess(dockerfile.index(helper_copy), dockerfile.index(run_patch))
         self.assertLess(dockerfile.index(tilelang_copy), dockerfile.index(run_patch))
+        self.assertLess(dockerfile.index(w8a8_copy), dockerfile.index(run_patch))
         self.assertIn(patch_dsv4_gfx1x.SPARSE_MARKER.removeprefix("# "), dockerfile)
         self.assertIn(patch_dsv4_gfx1x.LINEAR_MARKER.removeprefix("# "), dockerfile)
+        self.assertIn(
+            patch_dsv4_gfx1x.CACHED_LINEAR_MARKER.removeprefix("# "), dockerfile
+        )
         self.assertIn("assert importlib.util.find_spec('tilelang')", dockerfile)
 
 

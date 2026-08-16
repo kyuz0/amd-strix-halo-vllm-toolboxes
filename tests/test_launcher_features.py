@@ -28,6 +28,16 @@ class LauncherFeatureTests(unittest.TestCase):
         self.assertEqual(self.config["warmup"]["prompt_tokens"], 2048)
         self.assertEqual(self.config["valid_tp"], [1, 2])
 
+    def test_deepseek_reserves_room_for_post_profile_bf16_weight_cache(self):
+        flags = self.config["extra_flags"]
+        index = flags.index("--kv-cache-memory-bytes")
+        self.assertEqual(flags[index + 1], "6442450944")
+
+    def test_deepseek_uses_conservative_tp2_prefill_budget(self):
+        flags = self.config["extra_flags"]
+        index = flags.index("--max-num-batched-tokens")
+        self.assertEqual(flags[index + 1], "512")
+
     def test_speculative_args_are_compact_and_can_be_disabled(self):
         args = launcher_features.speculative_config_args(self.config, True)
         self.assertEqual(args[0], "--speculative-config")
