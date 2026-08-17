@@ -11,7 +11,9 @@ The caller controls activation through VLLM_GFX1X_W8A8_BF16. The separate
 VLLM_GFX1X_W8A8_BF16_DIRECT flag lets the patched linear kernel pass the
 original BF16 activation directly, avoiding a lossy FP8 quantize/dequantize
 round trip. Both flags are latched by the patched caller before this module is
-imported and are enabled only for the DeepSeek V4 gfx1151 model profile.
+imported and are enabled only for the DeepSeek V4 gfx1151 TP2 profile. TP1
+keeps them disabled because a full-model BF16 duplicate exceeds its memory
+headroom.
 """
 
 import os

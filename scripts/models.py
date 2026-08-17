@@ -4,9 +4,17 @@ DEFAULT_MODEL_ENV = {
 }
 
 
-def get_model_env(config):
-    """Return explicit per-serve defaults plus model-specific overrides."""
-    return DEFAULT_MODEL_ENV | config.get("env", {})
+def get_model_env(config, tp_size=None):
+    """Return explicit model policy resolved for the selected TP size.
+
+    ``env`` contains the safe model-wide baseline. ``env_by_tp`` may override
+    it for a validated tensor-parallel configuration. Keeping the baseline
+    safe matters for older callers that do not yet supply a TP size.
+    """
+    env = DEFAULT_MODEL_ENV | config.get("env", {})
+    if tp_size is not None:
+        env.update(config.get("env_by_tp", {}).get(int(tp_size), {}))
+    return env
 
 
 MODEL_TABLE = {
@@ -107,10 +115,23 @@ MODEL_TABLE = {
         "env": {
             "VLLM_ROCM_USE_AITER": "1",
             "VLLM_ROCM_USE_AITER_LINEAR": "0",
-            "VLLM_GFX1X_W8A8_BF16": "1",
-            "VLLM_GFX1X_W8A8_BF16_DIRECT": "1",
+            # A full-model BF16 weight duplicate cannot fit beside the target,
+            # DSpark, and KV cache on the 192 GiB single-rank host. TP-specific
+            # policy below enables it only when the weights are sharded.
+            "VLLM_GFX1X_W8A8_BF16": "0",
+            "VLLM_GFX1X_W8A8_BF16_DIRECT": "0",
             "VLLM_GFX1X_MOE_TUNE": "1",
             "VLLM_GFX1X_RADIX_TOPK": "1",
+        },
+        "env_by_tp": {
+            1: {
+                "VLLM_GFX1X_W8A8_BF16": "0",
+                "VLLM_GFX1X_W8A8_BF16_DIRECT": "0",
+            },
+            2: {
+                "VLLM_GFX1X_W8A8_BF16": "1",
+                "VLLM_GFX1X_W8A8_BF16_DIRECT": "1",
+            },
         },
         "ctx": "262144",
         "max_num_seqs": "1",
@@ -141,7 +162,6 @@ MODEL_TABLE = {
             # Avoid throttling chunked prefill to 256-token scheduler steps.
             # Start conservatively for TP=2; larger values need RCCL profiling.
             "--max-num-batched-tokens", "512",
-            "--logprobs-mode", "processed_logprobs",
         ]
     },
 

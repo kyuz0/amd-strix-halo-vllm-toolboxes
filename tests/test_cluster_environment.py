@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -31,22 +32,63 @@ class ClusterEnvironmentTests(unittest.TestCase):
         self.assertEqual(inherited["VLLM_ROCM_USE_AITER"], "0")
         self.assertEqual(inherited["VLLM_ROCM_USE_AITER_LINEAR"], "0")
 
-        deepseek = models.get_model_env(
-            models.MODEL_TABLE["deepseek-ai/DeepSeek-V4-Flash-0731"]
-        )
-        self.assertEqual(deepseek["VLLM_ROCM_USE_AITER"], "1")
-        self.assertEqual(deepseek["VLLM_ROCM_USE_AITER_LINEAR"], "0")
-        self.assertEqual(deepseek["VLLM_GFX1X_W8A8_BF16"], "1")
-        self.assertEqual(deepseek["VLLM_GFX1X_W8A8_BF16_DIRECT"], "1")
-        self.assertEqual(deepseek["VLLM_GFX1X_MOE_TUNE"], "1")
-        self.assertEqual(deepseek["VLLM_GFX1X_RADIX_TOPK"], "1")
+        config = models.MODEL_TABLE["deepseek-ai/DeepSeek-V4-Flash-0731"]
+        deepseek_tp1 = models.get_model_env(config, 1)
+        deepseek_tp2 = models.get_model_env(config, 2)
+        for deepseek in (deepseek_tp1, deepseek_tp2):
+            self.assertEqual(deepseek["VLLM_ROCM_USE_AITER"], "1")
+            self.assertEqual(deepseek["VLLM_ROCM_USE_AITER_LINEAR"], "0")
+            self.assertEqual(deepseek["VLLM_GFX1X_MOE_TUNE"], "1")
+            self.assertEqual(deepseek["VLLM_GFX1X_RADIX_TOPK"], "1")
+        self.assertEqual(deepseek_tp1["VLLM_GFX1X_W8A8_BF16"], "0")
+        self.assertEqual(deepseek_tp1["VLLM_GFX1X_W8A8_BF16_DIRECT"], "0")
+        self.assertEqual(deepseek_tp2["VLLM_GFX1X_W8A8_BF16"], "1")
+        self.assertEqual(deepseek_tp2["VLLM_GFX1X_W8A8_BF16_DIRECT"], "1")
 
     def test_both_launchers_apply_the_selected_model_environment(self):
-        expected = "env.update(models.get_model_env(config))"
+        expected = "model_env = models.get_model_env(config, current_tp)"
         for launcher in ("start_vllm.py", "start_vllm_cluster.py"):
             with self.subTest(launcher=launcher):
                 source = (ROOT / "scripts" / launcher).read_text()
                 self.assertIn(expected, source)
+                self.assertIn("env.update(model_env)", source)
+
+    def test_benchmark_launchers_resolve_model_environment_by_tp(self):
+        expected = {
+            "run_vllm_bench.py": "models.get_model_env(MODEL_TABLE[model], tp_size)",
+            "vllm_cluster_bench.py": (
+                "models.get_model_env(MODEL_TABLE[model], CLUSTER_TP)"
+            ),
+            "find_max_context.py": "models.get_model_env(config, tp_size)",
+        }
+        for filename, call in expected.items():
+            with self.subTest(filename=filename):
+                source = (ROOT / "benchmarks" / filename).read_text()
+                self.assertIn(call, source)
+
+    def test_strix_patch_disables_aiter_sampler_on_gfx1x(self):
+        source = """\
+def _skip_aiter_sampler_on_gfx1250() -> bool:
+    # Lazy ROCm-only import; keeps arch detection out of import time on CUDA/CPU.
+    from vllm.platforms.rocm import on_gfx1250
+
+    return on_gfx1250()
+
+enabled = (
+    rocm_aiter_ops.is_enabled()
+    and not _skip_aiter_sampler_on_gfx1250()  # TODO (JPVILLAM): Enable
+)
+"""
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "topk_topp_sampler.py"
+            path.write_text(source)
+            self.assertTrue(patch_strix.patch_gfx1x_aiter_sampler(path))
+            patched = path.read_text()
+            self.assertIn(patch_strix.GFX1X_AITER_SAMPLER_MARKER, patched)
+            self.assertIn("from vllm.platforms.rocm import on_gfx1x", patched)
+            self.assertIn("and not _skip_aiter_sampler_on_gfx1x()", patched)
+            self.assertNotIn("on_gfx1250", patched)
+            self.assertFalse(patch_strix.patch_gfx1x_aiter_sampler(path))
 
     @patch("cluster_manager.subprocess.run")
     def test_head_ray_daemon_starts_without_aiter_policy(self, run):

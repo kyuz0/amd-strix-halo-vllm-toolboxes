@@ -364,7 +364,8 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
     env["TRITON_CACHE_DIR"] = str(get_triton_cache_dir())
     # Ray daemons start without model-specific AITER values. The driver supplies
     # explicit defaults here, with validated model policy applied last.
-    env.update(models.get_model_env(config))
+    model_env = models.get_model_env(config, current_tp)
+    env.update(model_env)
     env["RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES"] = "1"
     env["VLLM_HOST_IP"] = head_ip
     env["NCCL_SOCKET_IFNAME"] = rdma_iface
@@ -432,7 +433,7 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
         "NCCL_IB_GID_INDEX",
         "NCCL_NET_GDR_LEVEL"
     ]
-    for key in config.get("env", {}):
+    for key in model_env:
         if key not in vars_to_print:
             vars_to_print.append(key)
         

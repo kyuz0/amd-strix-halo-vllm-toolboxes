@@ -335,16 +335,18 @@ To bypass this limitation, `scripts/patch_strix.py` applies a few APU-specific g
 
 The launcher exposes the exact generic backend names: `TRITON_ATTN`, `ROCM_ATTN`, and `ROCM_AITER_UNIFIED_ATTN`. `Qwen/Qwen3.6-35B-A3B` defaults to the gfx1151-verified unified AITER backend with the broad AITER toggle disabled. The legacy `ROCM_AITER_FA` backend is not offered because its paged-attention decode kernel has no Navi implementation.
 
-DeepSeek V4 is separate: its ROCm model implementation hardwires the model-specific `ROCM_FLASHMLA_SPARSE_DSV4` backend, so the launcher does not pass `--attention-backend`. Its model entry enables AITER for the tested sparse-indexer MQA-logits helper, disables AITER linear, and uses `--logprobs-mode processed_logprobs` to avoid the unsupported sampler.
+DeepSeek V4 is separate: its ROCm model implementation hardwires the model-specific `ROCM_FLASHMLA_SPARSE_DSV4` backend, so the launcher does not pass `--attention-backend`. Its model entry enables AITER for the tested sparse-indexer MQA-logits helper and disables AITER linear. A local gfx1x gate keeps the unsupported AITER output sampler disabled directly, without changing the API's logprob mode.
 
-The DeepSeek profile also enables a gfx1151-only cached-BF16 W8A8 linear path,
+For TP2, the DeepSeek profile also enables a gfx1151-only cached-BF16 W8A8 linear path,
 adapted from `AlexKGwyn/ds4-vllm-public`. FP8 weights remain the stored model
 format, but small-M decode dequantizes each used weight once, caches the BF16
 copy, and dispatches through vLLM's ROCm skinny GEMM while passing the original
 BF16 activation directly. This avoids repeated activation quantization and the
 generic block-FP8 Triton decode path. Because the cache is populated after
 startup profiling, the profile pins KV cache memory to 6 GiB per rank rather
-than allowing automatic KV sizing to consume the required headroom. This path
+than allowing automatic KV sizing to consume the required headroom. TP1 keeps
+the cached-weight path disabled because duplicating the full model's weights
+does not fit beside DeepSeek, DSpark, and KV cache on a 192 GiB host. This path
 changes floating-point numerics and must be benchmarked and quality-checked;
 the current Ubuntu-image performance warning still applies.
 

@@ -240,7 +240,7 @@ def run_bench_set(model, backend_name, output_dir, extra_env=None, overrides=Non
     env = get_cluster_env()
     
     # Model specific envs
-    model_env = MODEL_TABLE[model].get("env", {})
+    model_env = models.get_model_env(MODEL_TABLE[model], CLUSTER_TP)
     env.update(model_env)
     
     # Run specific envs (e.g. ROCm attention)

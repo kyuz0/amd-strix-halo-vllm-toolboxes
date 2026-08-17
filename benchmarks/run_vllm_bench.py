@@ -169,7 +169,7 @@ def run_throughput(model, tp_size, backend_name="Default", output_dir=RESULTS_DI
     env.pop("VLLM_ROCM_USE_AITER", None)
     
     # Inject model specific env vars (e.g. for AWQ)
-    model_env = MODEL_TABLE[model].get("env", {})
+    model_env = models.get_model_env(MODEL_TABLE[model], tp_size)
     env.update(model_env)
     
     # Extra Env

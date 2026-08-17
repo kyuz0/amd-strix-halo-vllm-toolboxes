@@ -54,9 +54,10 @@ Update this baseline after completing the runtime matrix below.
 8. Verify that `~/.cache/triton` and `~/.aiter` persist on both Ray nodes and
    that automatic warmup completes after the API becomes ready.
 9. For the cached-BF16 W8A8 path, record target-only throughput before testing
-   DSpark, confirm `[gfx1x_w8a8] BF16 direct path active` on every TP rank,
-   compare output quality against the stock path, and record peak host memory.
-   The BF16 copy changes numerics and is allocated after vLLM memory profiling.
+   DSpark, confirm TP1 leaves it disabled and TP2 logs
+   `[gfx1x_w8a8] BF16 direct path active` on every rank, compare output quality
+   against the stock path, and record peak host memory. The BF16 copy changes
+   numerics and is allocated after vLLM memory profiling.
 10. For the MXFP4 MoE profile, confirm `[gfx1x_moe] enabled` on every TP rank,
     compare fixed-prompt target and speculative decode with the gate both off
     and on, and run output-quality and maximum-concurrency checks. Do not infer
@@ -66,15 +67,16 @@ Update this baseline after completing the runtime matrix below.
     run long-context recall with the gate both off and on; kernel agreement at
     synthetic shapes is not a substitute for model recall.
 
-## DeepSeek V4 gfx1151, TileLang, and cached-BF16 W8A8
+## DeepSeek V4 gfx1151, TileLang, sampling, and cached-BF16 W8A8
 
-Owned by `scripts/patch_dsv4_gfx1x.py` and
+Owned by `scripts/patch_strix.py`, `scripts/patch_dsv4_gfx1x.py`, and
 the packaged `scripts/gfx1x_tilelang_mqa.py` and
 `scripts/gfx1x_radix_topk.py`, and
 `scripts/gfx1x_w8a8_bf16.py` helpers.
 
 | Upstream path | Local behavior | Update audit |
 |---|---|---|
+| `vllm/v1/sample/ops/topk_topp_sampler.py` | Extends upstream's gfx1250 AITER-sampler exclusion to all gfx1x/RDNA. DeepSeek can keep broad AITER enabled for separate sparse-indexer helpers while normal sampling uses the native path. This replaces the old `--logprobs-mode processed_logprobs` workaround and avoids its unconditional full-vocabulary `log_softmax`. | Check whether upstream now excludes gfx1151 or provides a validated RDNA sampler. Revalidate ordinary top-k/top-p sampling with DeepSeek's broad AITER toggle enabled; remove the patch once upstream provides the same gate. |
 | `vllm/v1/attention/ops/rocm_aiter_mla_sparse.py` | Routes prefill and paged sparse-indexer MQA logits to the local TileLang implementation on gfx1x. When the separate radix gate is enabled, both prefill and decode top-k use the deterministic local kernel; disabled, unavailable, and non-gfx1x cases retain upstream `top_k_per_row_*`. | Check whether upstream has a gfx11/gfx1151 sparse-indexer path, whether cache layout or function signatures changed, whether speculative verification still passes `next_n > 1` correctly, and whether top-k row-bound and output-index contracts changed. |
 | `vllm/model_executor/layers/quantization/utils/fp8_utils.py` | Keeps FP8 storage but converts gfx1x block-scaled matrix operands to BF16 for `tl.dot`; gfx1151 has no native FP8 matrix-core dot. | Check the block-scaled GEMM implementation, config construction, scale semantics, and any new upstream RDNA fallback. Remove when upstream avoids raw FP8 dot on gfx1x. |
 | `vllm/model_executor/kernels/linear/scaled_mm/triton.py` | When the DeepSeek-only environment gate is enabled on gfx1x, bypasses activation FP8 quantization and routes block-scaled linear calls to a cached BF16 weight. If the cache is unavailable, the original quantized-input and Triton paths remain intact. | Recheck `TritonFp8BlockScaledMMKernel`, `FP8BlockParams`, `weight_group_shape`, bias/cast/reshape ordering, Ray environment timing, and the stock fallback. Remove when upstream provides a performant RDNA block-FP8 or cached dequantized path. |
@@ -89,19 +91,26 @@ Build markers:
 - `PATCHED: gfx1x deterministic radix top-k`
 - `PATCHED: gfx1x block-FP8 GEMM uses BF16 tl.dot`
 - `PATCHED: gfx1x cached-BF16 W8A8 linear`
+- `PATCHED: disable AITER sampler on gfx1x`
 
-The DeepSeek model profile enables `VLLM_GFX1X_W8A8_BF16=1` and
-`VLLM_GFX1X_W8A8_BF16_DIRECT=1`, plus
-`VLLM_GFX1X_RADIX_TOPK=1`. Other models and non-gfx1x GPUs retain the stock
-paths. Setting `VLLM_GFX1X_RADIX_TOPK=0` restores upstream top-k. Setting the
-W8A8 base flag to `0` is the full W8A8 rollback for a manual serve; setting only
-the direct flag to `0` retains the cached-BF16
-quantized-input fallback. The launcher also pins the per-rank KV pool to
-6 GiB with `--kv-cache-memory-bytes 6442450944`: the BF16 cache is deliberately
-created only by small-M decode after startup profiling, so automatic KV sizing
-would otherwise consume its headroom. Revalidate that pin whenever model
-weights, context policy, cache layout, or the number of concurrent sequences
-changes.
+The DeepSeek model profile always enables `VLLM_GFX1X_RADIX_TOPK=1`. Its W8A8
+weight-cache policy is TP-aware: TP1 sets `VLLM_GFX1X_W8A8_BF16=0` and
+`VLLM_GFX1X_W8A8_BF16_DIRECT=0`; TP2 sets both to `1`. A TP1 process holds the
+entire 156+ GiB target and DSpark weights, so duplicating block-FP8 weights as
+BF16 exhausted the 188 GiB device during startup warmup. TP2 shards both the
+model and BF16 copies across hosts and retains the measured decode benefit.
+Callers must resolve the environment through `models.get_model_env(config,
+tp_size)` instead of reading `config["env"]` directly.
+
+Setting `VLLM_GFX1X_RADIX_TOPK=0` restores upstream sparse-indexer top-k.
+Setting the W8A8 base flag to `0` is the full cached-weight rollback; setting
+only the direct flag to `0` retains the cached-BF16 quantized-input fallback.
+The launcher also pins the per-rank KV pool to 6 GiB with
+`--kv-cache-memory-bytes 6442450944`. Revalidate that pin whenever model
+weights, context policy, cache layout, TP size, or concurrency changes. The
+model profile no longer passes `--logprobs-mode processed_logprobs`; the direct
+gfx1x sampler gate preserves the native fallback without changing logprob
+semantics or paying for a full-vocabulary log-softmax on every decode step.
 
 Tests: `tests/test_dsv4_gfx1x_patch.py`.
 

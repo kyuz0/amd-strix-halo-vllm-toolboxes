@@ -131,7 +131,7 @@ def get_vllm_server_cmd(model, tp_size, util, max_len, max_seqs, use_cluster=Fal
     
     # Env Setup
     env = os.environ.copy()
-    env.update(config.get("env", {}))
+    env.update(models.get_model_env(config, tp_size))
 
     # CLUSTER / RAY LOGIC
     # Only engage Ray if explicitly requested via --use-cluster

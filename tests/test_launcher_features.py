@@ -40,6 +40,11 @@ class LauncherFeatureTests(unittest.TestCase):
         index = flags.index("--max-num-batched-tokens")
         self.assertEqual(flags[index + 1], "512")
 
+    def test_deepseek_does_not_use_logprobs_to_select_native_sampler(self):
+        self.assertNotIn("--logprobs-mode", self.config["extra_flags"])
+        patcher = (ROOT / "scripts" / "patch_strix.py").read_text()
+        self.assertIn("GFX1X_AITER_SAMPLER_MARKER", patcher)
+
     def test_speculative_args_are_compact_and_can_be_disabled(self):
         args = launcher_features.speculative_config_args(self.config, True)
         self.assertEqual(args[0], "--speculative-config")

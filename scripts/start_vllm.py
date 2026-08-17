@@ -402,7 +402,8 @@ def configure_and_launch(model_idx, gpu_count):
 
     # Keep the image and Ray daemons model-neutral. Apply explicit defaults here,
     # then let validated model policy (notably DeepSeek V4) override them.
-    env.update(models.get_model_env(config))
+    model_env = models.get_model_env(config, current_tp)
+    env.update(model_env)
 
     print("\n" + "="*60)
     print(f" Launching: {name}")
@@ -415,11 +416,11 @@ def configure_and_launch(model_idx, gpu_count):
     if current_extra_flags:
         print(f" Extras:    {' '.join(current_extra_flags)}")
         
-    # Variables that represent the custom environment overrides for models
-    custom_env = config.get("env", {})
-    if custom_env:
+    # Print the resolved policy, including TP-specific overrides, so the launch
+    # banner describes what the worker will actually receive.
+    if model_env:
         print("\n --- Environment Variables ---")
-        for k, v in custom_env.items():
+        for k, v in model_env.items():
             print(f" export {k}={v}")
             
     print(f"\n Command:   {' '.join(cmd)}")

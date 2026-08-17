@@ -5,6 +5,46 @@ from pathlib import Path
 from patch_dsv4_gfx1x import patch_dsv4_gfx1x
 
 
+GFX1X_AITER_SAMPLER_MARKER = "# PATCHED: disable AITER sampler on gfx1x"
+
+
+def patch_gfx1x_aiter_sampler(path):
+    """Keep broad AITER helpers enabled without selecting its gfx1x sampler."""
+    source = path.read_text()
+    if GFX1X_AITER_SAMPLER_MARKER in source:
+        return False
+
+    old_helper = """def _skip_aiter_sampler_on_gfx1250() -> bool:
+    # Lazy ROCm-only import; keeps arch detection out of import time on CUDA/CPU.
+    from vllm.platforms.rocm import on_gfx1250
+
+    return on_gfx1250()
+"""
+    new_helper = f"""{GFX1X_AITER_SAMPLER_MARKER}
+def _skip_aiter_sampler_on_gfx1x() -> bool:
+    # AITER's output sampler is not validated on RDNA. DeepSeek still enables
+    # broad AITER for separate sparse-indexer helpers, so gate sampling here.
+    from vllm.platforms.rocm import on_gfx1x
+
+    return on_gfx1x()
+"""
+    old_call = (
+        "and not _skip_aiter_sampler_on_gfx1250()  "
+        "# TODO (JPVILLAM): Enable"
+    )
+    new_call = "and not _skip_aiter_sampler_on_gfx1x()"
+
+    if source.count(old_helper) != 1 or source.count(old_call) != 1:
+        raise RuntimeError(
+            "Unsupported vLLM AITER sampler gate layout; refusing to build "
+            "without the gfx1x native-sampler fallback"
+        )
+    source = source.replace(old_helper, new_helper, 1)
+    source = source.replace(old_call, new_call, 1)
+    path.write_text(source)
+    return True
+
+
 def patch_ray_executor_aiter_env(p_ray_executor):
     """Refresh cached model policy after Ray applies worker env vars."""
     txt = p_ray_executor.read_text()
@@ -134,6 +174,22 @@ def patch_vllm():
             
         p_aiter.write_text(txt)
         print(" -> Patched vllm/_aiter_ops.py (gfx1151 AITER gate, FP8 linear/MoE safety)")
+
+    # Patch 2.1: DeepSeek needs the broad AITER toggle for its sparse-indexer
+    # helper, but that toggle also selects AITER's unsupported output sampler on
+    # gfx1151. Gate the sampler directly instead of abusing processed_logprobs,
+    # which forces a full-vocabulary log_softmax during every decode step.
+    p_sampler = Path("vllm/v1/sample/ops/topk_topp_sampler.py")
+    if not p_sampler.exists():
+        raise RuntimeError(
+            "Missing vLLM top-k/top-p sampler; refusing to build without the "
+            "gfx1x AITER sampler gate"
+        )
+    patch_gfx1x_aiter_sampler(p_sampler)
+    print(
+        " -> Patched vllm/v1/sample/ops/topk_topp_sampler.py "
+        "(AITER sampler disabled on gfx1x)"
+    )
 
     # Patch 2.5: DeepSeek V4 has two private FP8 linear fast paths which check the
     # broad AITER toggle instead of the FP8-linear capability gate. That bypasses
