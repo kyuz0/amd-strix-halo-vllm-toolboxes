@@ -129,14 +129,19 @@ WORKDIR /opt/vllm
 COPY scripts/patch_strix.py /opt/vllm/patch_strix.py
 COPY scripts/patch_dsv4_gfx1x.py /opt/vllm/patch_dsv4_gfx1x.py
 COPY scripts/verify_vllm_compat.py /opt/vllm/verify_vllm_compat.py
+COPY scripts/patch_conch_moe_gfx1x.py /opt/patch_conch_moe_gfx1x.py
 COPY scripts/gfx1x_tilelang_mqa.py /opt/vllm/vllm/v1/attention/ops/gfx1x_tilelang_mqa.py
+COPY scripts/gfx1x_radix_topk.py /opt/vllm/vllm/v1/attention/ops/gfx1x_radix_topk.py
 COPY scripts/gfx1x_w8a8_bf16.py /opt/vllm/vllm/model_executor/kernels/linear/scaled_mm/gfx1x_w8a8_bf16.py
 RUN python /opt/vllm/patch_strix.py && \
     python /opt/vllm/verify_vllm_compat.py
 RUN python -m py_compile \
       /opt/vllm/vllm/v1/attention/ops/gfx1x_tilelang_mqa.py \
+      /opt/vllm/vllm/v1/attention/ops/gfx1x_radix_topk.py \
       /opt/vllm/vllm/model_executor/kernels/linear/scaled_mm/gfx1x_w8a8_bf16.py \
     && grep -q "PATCHED: gfx1x TileLang sparse-indexer MQA" \
+      /opt/vllm/vllm/v1/attention/ops/rocm_aiter_mla_sparse.py \
+    && grep -q "PATCHED: gfx1x deterministic radix top-k" \
       /opt/vllm/vllm/v1/attention/ops/rocm_aiter_mla_sparse.py \
     && grep -q "PATCHED: gfx1x block-FP8 GEMM uses BF16 tl.dot" \
       /opt/vllm/vllm/model_executor/layers/quantization/utils/fp8_utils.py \
@@ -171,6 +176,11 @@ RUN ROOT=$(rocm-sdk path --root) && \
     TRITON_BEFORE=$(python -c 'import triton; print(triton.__version__)') && \
     python -m pip install -c /tmp/rocm-stack.constraints -r requirements/rocm.txt && \
     python -m pip install --no-deps /tmp/dist/*.whl && \
+    python /opt/patch_conch_moe_gfx1x.py && \
+    python -m py_compile \
+      /opt/venv/lib/python3.12/site-packages/vllm/third_party/triton_kernels/matmul_ogs_details/opt_flags.py && \
+    grep -q "PATCHED: opt-in gfx1x MXFP4 MoE tuning" \
+      /opt/venv/lib/python3.12/site-packages/vllm/third_party/triton_kernels/matmul_ogs_details/opt_flags.py && \
     test "$(python -c 'import importlib.metadata as m; print(m.version("vllm"))')" = "$VLLM_BUILD_VERSION" && \
     test "$(python -c 'import torch; print(torch.__version__)')" = "$TORCH_BEFORE" && \
     test "$(python -c 'import triton; print(triton.__version__)')" = "$TRITON_BEFORE" && \
@@ -267,6 +277,7 @@ COPY scripts/start_vllm.py /opt/start-vllm
 COPY scripts/start_vllm_cluster.py /opt/start-vllm-cluster
 COPY scripts/launcher_features.py /opt/launcher_features.py
 COPY scripts/vllm_warmup.py /opt/vllm_warmup.py
+COPY scripts/vllm_collective_report.py /opt/vllm_collective_report.py
 COPY scripts/measure_bandwidth.sh /opt/measure_bandwidth.sh
 COPY scripts/cluster_manager.py /opt/cluster_manager.py
 COPY scripts/models.py /opt/models.py
@@ -283,6 +294,7 @@ RUN chmod 0644 /etc/profile.d/*.sh /opt/max_context_results.json /opt/models.py 
       /opt/VLLM_PATCH_MANIFEST.md \
  && chmod +x /opt/start-vllm /opt/start-vllm-cluster /opt/run_vllm_bench.py \
       /opt/vllm_warmup.py \
+      /opt/vllm_collective_report.py \
       /opt/vllm_cluster_bench.py /opt/find_max_context.py /opt/measure_bandwidth.sh \
       /opt/compare_eth_vs_rdma.sh /opt/configure_cluster.sh \
  && ln -s /opt/start-vllm /usr/local/bin/start-vllm \
@@ -290,6 +302,7 @@ RUN chmod 0644 /etc/profile.d/*.sh /opt/max_context_results.json /opt/models.py 
  && ln -s /opt/run_vllm_bench.py /usr/local/bin/run-vllm-bench \
  && ln -s /opt/vllm_cluster_bench.py /usr/local/bin/vllm-cluster-bench \
  && ln -s /opt/find_max_context.py /usr/local/bin/find-max-context \
+ && ln -s /opt/vllm_collective_report.py /usr/local/bin/vllm-collective-report \
  && printf 'ulimit -S -c 0\n' > /etc/profile.d/90-nocoredump.sh \
  && chmod 0644 /etc/profile.d/90-nocoredump.sh
 
@@ -338,6 +351,7 @@ RUN if [ ! -e "$ROCM_PATH/lib/libamdhip64.so" ] && [ ! -L "$ROCM_PATH/lib/libamd
 # and their immediate runtime dependencies. This intentionally runs before publishing.
 RUN for command_name in \
       start-vllm start-vllm-cluster run-vllm-bench vllm-cluster-bench find-max-context \
+      vllm-collective-report \
       vllm ray dialog ssh ip pgrep rocm-smi rdma ibv_devices perfquery ping iperf3 lspci \
       hipcc hipconfig g++ make; do \
       command -v "$command_name" >/dev/null || { echo "ERROR: missing runtime command: $command_name" >&2; exit 1; }; \
@@ -357,6 +371,7 @@ RUN for command_name in \
       /opt/venv/lib/python3.12/site-packages/aiter_meta/csrc/cpp_itfs/utils.py \
  && python -m py_compile \
       /opt/start-vllm /opt/start-vllm-cluster /opt/cluster_manager.py /opt/models.py \
+      /opt/launcher_features.py /opt/vllm_collective_report.py \
       /opt/bench_utils.py /opt/run_vllm_bench.py /opt/vllm_cluster_bench.py /opt/find_max_context.py \
  && rm -rf /opt/__pycache__
 WORKDIR /opt

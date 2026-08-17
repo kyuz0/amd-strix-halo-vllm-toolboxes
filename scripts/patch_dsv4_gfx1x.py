@@ -12,6 +12,7 @@ from pathlib import Path
 
 
 SPARSE_MARKER = "# PATCHED: gfx1x TileLang sparse-indexer MQA"
+RADIX_TOPK_MARKER = "# PATCHED: gfx1x deterministic radix top-k"
 LINEAR_MARKER = "# PATCHED: gfx1x block-FP8 GEMM uses BF16 tl.dot"
 CACHED_LINEAR_MARKER = "# PATCHED: gfx1x cached-BF16 W8A8 linear"
 
@@ -75,6 +76,128 @@ def patch_sparse_indexer_mqa(path: Path) -> bool:
         "        )\n\n"
         "    aiter_mqa_logits_module = None\n",
         "prefill gfx1x dispatch",
+    )
+    path.write_text(source)
+    return True
+
+
+def patch_sparse_indexer_topk(path: Path) -> bool:
+    """Use deterministic radix top-k for gfx1x sparse prefill and decode."""
+    source = path.read_text()
+    if RADIX_TOPK_MARKER in source:
+        return False
+
+    source = _replace_once(
+        source,
+        "import functools\nimport importlib\nimport math\n",
+        "import functools\nimport importlib\nimport math\nimport os\n",
+        "radix top-k environment import",
+    )
+    source = _replace_once(
+        source,
+        "def rocm_aiter_sparse_attn_indexer_fake(\n",
+        f"{RADIX_TOPK_MARKER}\n"
+        "_GFX1X_RADIX_TOPK_IMPL = None\n"
+        "_GFX1X_RADIX_TOPK_IMPORT_FAILED = False\n\n\n"
+        "def _gfx1x_radix_topk_impl():\n"
+        "    # Resolve lazily after Ray has installed the model environment.\n"
+        "    global _GFX1X_RADIX_TOPK_IMPL, _GFX1X_RADIX_TOPK_IMPORT_FAILED\n"
+        "    if (\n"
+        "        not on_gfx1x()\n"
+        "        or os.environ.get(\"VLLM_GFX1X_RADIX_TOPK\") != \"1\"\n"
+        "        or _GFX1X_RADIX_TOPK_IMPORT_FAILED\n"
+        "    ):\n"
+        "        return None\n"
+        "    if _GFX1X_RADIX_TOPK_IMPL is None:\n"
+        "        try:\n"
+        "            from vllm.v1.attention.ops.gfx1x_radix_topk import select_topk\n\n"
+        "            _GFX1X_RADIX_TOPK_IMPL = select_topk\n"
+        "            print(\"[gfx1x_topk] deterministic radix path active\", flush=True)\n"
+        "        except Exception as exc:\n"
+        "            _GFX1X_RADIX_TOPK_IMPORT_FAILED = True\n"
+        "            print(\n"
+        "                f\"[gfx1x_topk] unavailable; using upstream top-k: {exc}\",\n"
+        "                flush=True,\n"
+        "            )\n"
+        "    return _GFX1X_RADIX_TOPK_IMPL\n\n\n"
+        "def _gfx1x_radix_topk(\n"
+        "    logits, topk_tokens, row_starts=None, row_ends=None, out=None\n"
+        ") -> bool:\n"
+        "    impl = _gfx1x_radix_topk_impl()\n"
+        "    if impl is None:\n"
+        "        return False\n"
+        "    impl(\n"
+        "        logits,\n"
+        "        topk_tokens,\n"
+        "        row_starts=row_starts,\n"
+        "        row_ends=row_ends,\n"
+        "        out=out,\n"
+        "    )\n"
+        "    return True\n\n\n"
+        "def rocm_aiter_sparse_attn_indexer_fake(\n",
+        "radix top-k dispatcher",
+    )
+    source = _replace_once(
+        source,
+        "            num_rows = logits.shape[0]\n\n"
+        "            torch.ops._C.top_k_per_row_prefill(\n"
+        "                logits,\n"
+        "                chunk.cu_seqlen_ks,\n"
+        "                chunk.cu_seqlen_ke,\n"
+        "                topk_indices,\n"
+        "                num_rows,\n"
+        "                logits.stride(0),\n"
+        "                logits.stride(1),\n"
+        "                topk_tokens,\n"
+        "            )\n",
+        "            if not _gfx1x_radix_topk(\n"
+        "                logits,\n"
+        "                topk_tokens,\n"
+        "                row_starts=chunk.cu_seqlen_ks,\n"
+        "                row_ends=chunk.cu_seqlen_ke,\n"
+        "                out=topk_indices,\n"
+        "            ):\n"
+        "                num_rows = logits.shape[0]\n"
+        "                torch.ops._C.top_k_per_row_prefill(\n"
+        "                    logits,\n"
+        "                    chunk.cu_seqlen_ks,\n"
+        "                    chunk.cu_seqlen_ke,\n"
+        "                    topk_indices,\n"
+        "                    num_rows,\n"
+        "                    logits.stride(0),\n"
+        "                    logits.stride(1),\n"
+        "                    topk_tokens,\n"
+        "                )\n",
+        "prefill radix top-k dispatch",
+    )
+    source = _replace_once(
+        source,
+        "        num_rows = logits.shape[0]\n\n"
+        "        torch.ops._C.top_k_per_row_decode(\n"
+        "            logits,\n"
+        "            next_n,\n"
+        "            decode_metadata.seq_lens,\n"
+        "            topk_indices,\n"
+        "            num_rows,\n"
+        "            logits.stride(0),\n"
+        "            logits.stride(1),\n"
+        "            topk_tokens,\n"
+        "        )\n",
+        "        if not _gfx1x_radix_topk(\n"
+        "            logits, topk_tokens, out=topk_indices\n"
+        "        ):\n"
+        "            num_rows = logits.shape[0]\n"
+        "            torch.ops._C.top_k_per_row_decode(\n"
+        "                logits,\n"
+        "                next_n,\n"
+        "                decode_metadata.seq_lens,\n"
+        "                topk_indices,\n"
+        "                num_rows,\n"
+        "                logits.stride(0),\n"
+        "                logits.stride(1),\n"
+        "                topk_tokens,\n"
+        "            )\n",
+        "decode radix top-k dispatch",
     )
     path.write_text(source)
     return True
@@ -254,6 +377,10 @@ def patch_dsv4_gfx1x(root: Path = Path(".")) -> list[Path]:
             patch_sparse_indexer_mqa,
         ),
         (
+            root / "vllm/v1/attention/ops/rocm_aiter_mla_sparse.py",
+            patch_sparse_indexer_topk,
+        ),
+        (
             root
             / "vllm/model_executor/layers/quantization/utils/fp8_utils.py",
             patch_block_scaled_fp8_linear,
@@ -266,6 +393,6 @@ def patch_dsv4_gfx1x(root: Path = Path(".")) -> list[Path]:
     )
     changed = []
     for path, patcher in targets:
-        if path.exists() and patcher(path):
+        if path.exists() and patcher(path) and path not in changed:
             changed.append(path)
     return changed

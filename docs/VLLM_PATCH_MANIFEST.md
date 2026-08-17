@@ -11,7 +11,9 @@ The current build inputs are:
 | ROCm wheels | `7.14.0` |
 | PyTorch | `2.11.0+rocm7.14.0` |
 | AITER | `v0.1.19` |
-| vLLM audited baseline | `v0.27.1` / `6e448d0ea9bf3d88d898b65449ca6dc2aec170ac` |
+| vLLM stable fallback | `v0.27.1` / `6e448d0ea9bf3d88d898b65449ca6dc2aec170ac` |
+| vLLM validated development baseline | `v0.27.2rc1.dev16` / `79f3183f86b89c3bda05d467041bf3ef9ef60426` |
+| conch-triton-kernels | `1.2.1` (from vLLM `requirements/rocm.txt`) |
 | rdma-core | `v62.0` |
 | Target GPU | `gfx1151` / Strix Halo |
 
@@ -55,32 +57,45 @@ Update this baseline after completing the runtime matrix below.
    DSpark, confirm `[gfx1x_w8a8] BF16 direct path active` on every TP rank,
    compare output quality against the stock path, and record peak host memory.
    The BF16 copy changes numerics and is allocated after vLLM memory profiling.
+10. For the MXFP4 MoE profile, confirm `[gfx1x_moe] enabled` on every TP rank,
+    compare fixed-prompt target and speculative decode with the gate both off
+    and on, and run output-quality and maximum-concurrency checks. Do not infer
+    TP=2 behavior from the single-rank kernel result recorded below.
+11. For radix top-k, compare its output exactly against the stable reference on
+    random, tied, `-inf`-masked, bounded-prefill, and decode-shaped inputs. Then
+    run long-context recall with the gate both off and on; kernel agreement at
+    synthetic shapes is not a substitute for model recall.
 
 ## DeepSeek V4 gfx1151, TileLang, and cached-BF16 W8A8
 
 Owned by `scripts/patch_dsv4_gfx1x.py` and
 the packaged `scripts/gfx1x_tilelang_mqa.py` and
+`scripts/gfx1x_radix_topk.py`, and
 `scripts/gfx1x_w8a8_bf16.py` helpers.
 
 | Upstream path | Local behavior | Update audit |
 |---|---|---|
-| `vllm/v1/attention/ops/rocm_aiter_mla_sparse.py` | Routes prefill and paged sparse-indexer MQA logits to the local TileLang implementation on gfx1x. Other GPUs retain upstream dispatch. | Check whether upstream has a gfx11/gfx1151 sparse-indexer path, whether cache layout or function signatures changed, and whether speculative verification still passes `next_n > 1` correctly. |
+| `vllm/v1/attention/ops/rocm_aiter_mla_sparse.py` | Routes prefill and paged sparse-indexer MQA logits to the local TileLang implementation on gfx1x. When the separate radix gate is enabled, both prefill and decode top-k use the deterministic local kernel; disabled, unavailable, and non-gfx1x cases retain upstream `top_k_per_row_*`. | Check whether upstream has a gfx11/gfx1151 sparse-indexer path, whether cache layout or function signatures changed, whether speculative verification still passes `next_n > 1` correctly, and whether top-k row-bound and output-index contracts changed. |
 | `vllm/model_executor/layers/quantization/utils/fp8_utils.py` | Keeps FP8 storage but converts gfx1x block-scaled matrix operands to BF16 for `tl.dot`; gfx1151 has no native FP8 matrix-core dot. | Check the block-scaled GEMM implementation, config construction, scale semantics, and any new upstream RDNA fallback. Remove when upstream avoids raw FP8 dot on gfx1x. |
 | `vllm/model_executor/kernels/linear/scaled_mm/triton.py` | When the DeepSeek-only environment gate is enabled on gfx1x, bypasses activation FP8 quantization and routes block-scaled linear calls to a cached BF16 weight. If the cache is unavailable, the original quantized-input and Triton paths remain intact. | Recheck `TritonFp8BlockScaledMMKernel`, `FP8BlockParams`, `weight_group_shape`, bias/cast/reshape ordering, Ray environment timing, and the stock fallback. Remove when upstream provides a performant RDNA block-FP8 or cached dequantized path. |
 | `vllm/v1/executor/ray_executor_v2.py` | Refreshes the latched W8A8 environment gate after Ray copies model variables into an already-created worker, beside the existing AITER refresh. | Check when actor imports occur relative to `initialize_worker(env_vars)`. Both TP ranks must log the active path; printed driver environment alone is insufficient. |
 | new `vllm/v1/attention/ops/gfx1x_tilelang_mqa.py` | TileLang BF16 sparse-indexer GEMM, paged-cache de-shuffle, bounded KV buckets, and speculative-row causal bounds. Adapted from AlexKGwyn/ds4-vllm-public. | Compare with the current upstream sparse indexer and the source project's latest `ds4_tl_indexer.py`. Revalidate page layout, query shape, FP8 scale interpretation, context bucketing, and `next_n`. |
+| new `vllm/v1/attention/ops/gfx1x_radix_topk.py` | Deterministic radix threshold selection plus ordered integer compaction. It emits local prefill indices or global decode indices already ascending, with `-1` padding, without atomics or full-row sort scratch. Adapted from AlexKGwyn/ds4-vllm-public commit `95c45bb94f324fcf3f58ec1f5eaf2d1aaceb87ff`. | Compare against the stable reference for both histogram modes and every served top-k. Recheck Triton histogram lowering, float-to-key ordering, tie behavior, row bounds, output strides, `-inf` handling, and maximum context. Remove if upstream gains deterministic performant ROCm selection. |
 | new `vllm/model_executor/kernels/linear/scaled_mm/gfx1x_w8a8_bf16.py` | Caches each block-dequantized BF16 weight, sends small-M decode through `rocm_unquantized_gemm_impl`/gfx1x skinny GEMM, and optionally reuses warm weights for prefill. Adapted from AlexKGwyn/ds4-vllm-public. | Revalidate scale orientation and dtype, weight layout, skinny-GEMM dispatch, cache lifetime, temporary FP32 peak, BF16 cache size, output quality, and cold/warm behavior. Never infer end-to-end speed from the source project's per-kernel claim. |
 
 Build markers:
 
 - `PATCHED: gfx1x TileLang sparse-indexer MQA`
+- `PATCHED: gfx1x deterministic radix top-k`
 - `PATCHED: gfx1x block-FP8 GEMM uses BF16 tl.dot`
 - `PATCHED: gfx1x cached-BF16 W8A8 linear`
 
 The DeepSeek model profile enables `VLLM_GFX1X_W8A8_BF16=1` and
-`VLLM_GFX1X_W8A8_BF16_DIRECT=1`. Other models and non-gfx1x GPUs retain the
-stock path. Setting the base flag to `0` is the full rollback for a manual
-serve; setting only the direct flag to `0` retains the cached-BF16
+`VLLM_GFX1X_W8A8_BF16_DIRECT=1`, plus
+`VLLM_GFX1X_RADIX_TOPK=1`. Other models and non-gfx1x GPUs retain the stock
+paths. Setting `VLLM_GFX1X_RADIX_TOPK=0` restores upstream top-k. Setting the
+W8A8 base flag to `0` is the full W8A8 rollback for a manual serve; setting only
+the direct flag to `0` retains the cached-BF16
 quantized-input fallback. The launcher also pins the per-rank KV pool to
 6 GiB with `--kv-cache-memory-bytes 6442450944`: the BF16 cache is deliberately
 created only by small-M decode after startup profiling, so automatic KV sizing
@@ -89,6 +104,71 @@ weights, context policy, cache layout, or the number of concurrent sequences
 changes.
 
 Tests: `tests/test_dsv4_gfx1x_patch.py`.
+
+Initial gfx1151 validation on the 192 GiB `gh2` host used the same ROCm,
+PyTorch, Triton, and validated vLLM development baseline listed above. The
+radix kernel matched its stable reference exactly for random 128K rows, exact
+ties, `-inf` masks, underfilled rows, bounded/local prefill indices, repeated
+launches, and both histogram implementations. Component timings for top-512
+selection were:
+
+| Shape | Radix | Stable two-sort | Speedup |
+|---|---:|---:|---:|
+| K7-like decode, `8 x 128K` | `494.5 us` | `1105.0 us` | `2.23x` |
+| prefill, `32 x 228K` | `1022.2 us` | `6085.0 us` | `5.95x` |
+| prefill, `128 x 228K` | `3393.7 us` | `29355.2 us` | `8.65x` |
+
+A disposable TP=1 server then loaded the exact patched vLLM baseline with
+native K7 DSpark, logged `[gfx1x_topk] deterministic radix path active`, and
+recovered the exact needle from a 33,732-token neutral-filler prompt while
+generating 256 tokens. This validates the enabled single-rank integration; it
+does not replace the required TP=2, gate-off A/B, deeper recall, or benchmark
+matrix before promotion.
+
+## gfx1x MXFP4 MoE tile profile
+
+Owned by `scripts/patch_conch_moe_gfx1x.py`. The patch is applied after vLLM's
+ROCm requirements install `conch-triton-kernels`, because the target is the
+vendored conch module inside the installed vLLM package rather than the source
+tree used to build the wheel.
+
+| Installed upstream path | Local behavior | Update audit |
+|---|---|---|
+| `vllm/third_party/triton_kernels/matmul_ogs_details/opt_flags.py` | Adds an explicit gfx1x BF16-by-MXFP4 skinny-M profile: `BM=16`, `BN=32`, `BK=256`, two warps, two stages, and one wave per EU. It is enabled only by `VLLM_GFX1X_MOE_TUNE=1`; every value is independently overridable. Other dtypes, unscaled weights, large-M work, non-RDNA3/4 targets, and a disabled gate retain conch's stock selector. | Recheck the conch version and patch anchors, `make_default_opt_flags_amd`, RDNA target detection, bitwidth/scale semantics, `target_kernel_kwargs`, and whether upstream has gained a gfx1151 decode profile. Compare generated kernels and output quality before carrying the values forward. |
+
+The initial profile is adapted from
+[AlexKGwyn/ds4-vllm-public](https://github.com/AlexKGwyn/ds4-vllm-public/tree/71a73d0c1ad42a51e8d4da7b3585a217917a4637),
+but it is deliberately narrower: the local gate requires the exact scaled
+BF16-by-MXFP4 case and does not import that project's unrelated routing,
+target-query, or custom all-reduce changes.
+
+The DeepSeek model profile enables `VLLM_GFX1X_MOE_TUNE=1`. To roll back this
+optimization for a manual serve, set it to `0`. Optional overrides are
+`VLLM_GFX1X_MOE_BM`, `VLLM_GFX1X_MOE_BN`, `VLLM_GFX1X_MOE_BK`,
+`VLLM_GFX1X_MOE_NW`, `VLLM_GFX1X_MOE_NS`, and `VLLM_GFX1X_MOE_WPE`.
+
+Initial controlled result on the 192 GiB gfx1151 `gh2` host, using the
+development baseline above, TP=1, K7 greedy DSpark, a fixed prompt, 300 output
+tokens, two warmups, and five measured requests:
+
+| Profile | TTFT | Decode throughput |
+|---|---:|---:|
+| stock conch selector | `1.499 s` | `11.281 +/- 0.007 tok/s` |
+| local MXFP4 profile | `0.778 s` | `21.766 +/- 0.016 tok/s` |
+
+Memoizing conch target, backend, and CU-count queries was also tested with this
+same profile. It measured `21.765 +/- 0.015 tok/s`, versus
+`21.766 +/- 0.016 tok/s` without memoization, so the extra patch is not shipped.
+
+This is a kernel/profile A/B, not a complete validation. A deterministic chat
+sanity request produced a coherent answer and fixed-prompt DSpark draft
+acceptance remained comparable to the baseline, but TP=2, long-context,
+multi-request, benchmark-recall, and broader accuracy checks are still required
+before promotion.
+
+Build marker: `PATCHED: opt-in gfx1x MXFP4 MoE tuning`.
+
+Tests: `tests/test_conch_moe_gfx1x_patch.py`.
 
 ## Native DSpark / DFlash block speculation
 
@@ -155,6 +235,31 @@ therefore warms both GPUs. Compiled caches remain host-persistent.
 At the next update, verify the OpenAI route, model discovery response, chat
 template behavior, first-request compile log, cache locations on both nodes,
 and whether vLLM has gained a native post-start request warmup facility.
+
+## TP collective profiling
+
+The cluster launcher exposes an opt-in `TP Collective Profile` toggle. It uses
+vLLM's native Torch profiler rather than patching RCCL or the communicator. The
+profiler is configured with tensor-shape recording, but stack and memory
+tracking disabled, and remains dormant until the operator calls:
+
+```bash
+curl -X POST http://127.0.0.1:8000/start_profile
+# Send one controlled inference request.
+curl -X POST http://127.0.0.1:8000/stop_profile
+vllm-collective-report
+```
+
+Each Ray rank writes its own compressed trace under
+`~/.cache/vllm/profiles`. Run `vllm-collective-report` on both hosts, or pass
+explicit trace paths, to summarize actual all-reduce/all-gather tensor shapes
+and RCCL/NCCL GPU-kernel durations. Profiling is deliberately disabled by
+default because Torch tracing materially perturbs latency. At an update,
+recheck `ProfilerConfig`, the `/start_profile` and `/stop_profile` routes,
+multi-rank trace fan-out, Chrome-trace shape keys, and RCCL kernel event names.
+
+Tests: `tests/test_launcher_features.py` and
+`tests/test_collective_report.py`.
 
 ## General Strix/AITER vLLM patcher
 

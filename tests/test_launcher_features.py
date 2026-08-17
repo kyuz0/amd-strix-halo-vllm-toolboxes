@@ -1,5 +1,6 @@
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -48,6 +49,17 @@ class LauncherFeatureTests(unittest.TestCase):
             launcher_features.speculative_config_args(self.config, False), []
         )
 
+    def test_collective_profiler_is_opt_in_and_records_shapes(self):
+        self.assertEqual(launcher_features.collective_profiler_args(False), [])
+        with tempfile.TemporaryDirectory() as td:
+            args = launcher_features.collective_profiler_args(True, td)
+        self.assertEqual(args[0], "--profiler-config")
+        config = json.loads(args[1])
+        self.assertEqual(config["profiler"], "torch")
+        self.assertTrue(config["torch_profiler_record_shapes"])
+        self.assertFalse(config["torch_profiler_with_stack"])
+        self.assertTrue(config["ignore_frontend"])
+
     @patch("launcher_features.subprocess.Popen")
     @patch("launcher_features.get_warmup_script")
     def test_warmup_helper_is_spawned_with_parent_and_model_context(
@@ -74,6 +86,9 @@ class LauncherFeatureTests(unittest.TestCase):
                 self.assertIn("Automatic Warmup:", source)
                 self.assertIn("speculative_config_args", source)
                 self.assertIn("launch_automatic_warmup", source)
+        cluster_source = (ROOT / "scripts" / "start_vllm_cluster.py").read_text()
+        self.assertIn("TP Collective Profile:", cluster_source)
+        self.assertIn("collective_profiler_args", cluster_source)
 
     def test_runtime_image_contains_the_warmup_helper(self):
         dockerfile = (ROOT / "Dockerfile.ubuntu-repoamd").read_text()
@@ -83,6 +98,11 @@ class LauncherFeatureTests(unittest.TestCase):
         )
         self.assertIn(
             "COPY scripts/vllm_warmup.py /opt/vllm_warmup.py", dockerfile
+        )
+        self.assertIn(
+            "COPY scripts/vllm_collective_report.py "
+            "/opt/vllm_collective_report.py",
+            dockerfile,
         )
 
 

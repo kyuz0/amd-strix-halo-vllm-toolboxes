@@ -348,6 +348,14 @@ than allowing automatic KV sizing to consume the required headroom. This path
 changes floating-point numerics and must be benchmarked and quality-checked;
 the current Ubuntu-image performance warning still applies.
 
+The same profile enables an opt-in deterministic radix top-k kernel for the
+sparse indexer. It replaces the gfx1151 prefill and decode selection calls,
+emits indices in a stable ascending order, and avoids full-row sort scratch at
+long context. `VLLM_GFX1X_RADIX_TOPK=0` restores upstream top-k. This kernel is
+adapted from `AlexKGwyn/ds4-vllm-public`; it must pass exact selection and
+long-context recall checks whenever vLLM, Triton, or the sparse-indexer layout
+changes.
+
 ## 9) DeepSeek V4 DSpark and automatic warmup
 
 `deepseek-ai/DeepSeek-V4-Flash-0731` now defaults to vLLM's native AMD DSpark

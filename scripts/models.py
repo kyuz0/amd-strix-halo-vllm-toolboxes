@@ -109,6 +109,8 @@ MODEL_TABLE = {
             "VLLM_ROCM_USE_AITER_LINEAR": "0",
             "VLLM_GFX1X_W8A8_BF16": "1",
             "VLLM_GFX1X_W8A8_BF16_DIRECT": "1",
+            "VLLM_GFX1X_MOE_TUNE": "1",
+            "VLLM_GFX1X_RADIX_TOPK": "1",
         },
         "ctx": "262144",
         "max_num_seqs": "1",

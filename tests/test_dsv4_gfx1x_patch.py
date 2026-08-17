@@ -66,6 +66,53 @@ def rocm_fp8_mqa_logits(q, kv, weights, cu_seqlen_ks, cu_seqlen_ke):
 '''
 
 
+RADIX_SPARSE_SOURCE = '''\
+import functools
+import importlib
+import math
+
+
+def rocm_aiter_sparse_attn_indexer_fake(
+):
+    pass
+
+
+def run_prefill(logits, chunk, topk_indices, topk_tokens):
+    if True:
+        if True:
+            num_rows = logits.shape[0]
+
+            torch.ops._C.top_k_per_row_prefill(
+                logits,
+                chunk.cu_seqlen_ks,
+                chunk.cu_seqlen_ke,
+                topk_indices,
+                num_rows,
+                logits.stride(0),
+                logits.stride(1),
+                topk_tokens,
+            )
+
+
+def run_decode(
+    logits, next_n, decode_metadata, topk_indices, topk_tokens,
+):
+    if True:
+        num_rows = logits.shape[0]
+
+        torch.ops._C.top_k_per_row_decode(
+            logits,
+            next_n,
+            decode_metadata.seq_lens,
+            topk_indices,
+            num_rows,
+            logits.stride(0),
+            logits.stride(1),
+            topk_tokens,
+        )
+'''
+
+
 LINEAR_SOURCE = '''\
 @triton.jit
 def _w8a8_triton_block_scaled_mm(
@@ -159,6 +206,28 @@ class DeepSeekV4Gfx1xPatchTests(unittest.TestCase):
             self.assertFalse(patch_dsv4_gfx1x.patch_sparse_indexer_mqa(path))
             self.assertEqual(path.read_text(), patched)
 
+    def test_radix_topk_patch_is_gfx1x_opt_in_with_stock_fallback(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "rocm_aiter_mla_sparse.py"
+            path.write_text(RADIX_SPARSE_SOURCE)
+
+            self.assertTrue(patch_dsv4_gfx1x.patch_sparse_indexer_topk(path))
+            patched = path.read_text()
+
+            self.assertIn(patch_dsv4_gfx1x.RADIX_TOPK_MARKER, patched)
+            self.assertIn("not on_gfx1x()", patched)
+            self.assertIn(
+                'os.environ.get("VLLM_GFX1X_RADIX_TOPK") != "1"', patched
+            )
+            self.assertIn("row_starts=chunk.cu_seqlen_ks", patched)
+            self.assertIn("row_ends=chunk.cu_seqlen_ke", patched)
+            self.assertIn("torch.ops._C.top_k_per_row_prefill(", patched)
+            self.assertIn("torch.ops._C.top_k_per_row_decode(", patched)
+            ast.parse(patched)
+
+            self.assertFalse(patch_dsv4_gfx1x.patch_sparse_indexer_topk(path))
+            self.assertEqual(path.read_text(), patched)
+
     def test_block_scaled_linear_patch_preserves_native_non_gfx1x_path(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "fp8_utils.py"
@@ -235,6 +304,19 @@ class DeepSeekV4Gfx1xPatchTests(unittest.TestCase):
         self.assertIn("_KV_BUCKET = 512", source)
         self.assertIn("_PREFILL_KV_BUCKET = 8192", source)
 
+    def test_radix_topk_module_is_deterministic_and_has_reference_path(self):
+        module_path = ROOT / "scripts/gfx1x_radix_topk.py"
+        source = module_path.read_text()
+
+        ast.parse(source)
+        self.assertIn("AlexKGwyn/ds4-vllm-public", source)
+        self.assertIn("def _topk_rows_kernel(", source)
+        self.assertIn("def topk_indices_ascending_reference(", source)
+        self.assertIn("No floating-point accumulation and no atomic", source)
+        self.assertIn(
+            'os.environ.get("VLLM_GFX1X_RADIX_TOPK", "0") == "1"', source
+        )
+
     def test_cached_bf16_helper_has_bounded_cold_cache_and_skinny_dispatch(self):
         helper = ROOT / "scripts/gfx1x_w8a8_bf16.py"
         source = helper.read_text()
@@ -257,6 +339,10 @@ class DeepSeekV4Gfx1xPatchTests(unittest.TestCase):
             "COPY scripts/gfx1x_tilelang_mqa.py "
             "/opt/vllm/vllm/v1/attention/ops/gfx1x_tilelang_mqa.py"
         )
+        radix_topk_copy = (
+            "COPY scripts/gfx1x_radix_topk.py "
+            "/opt/vllm/vllm/v1/attention/ops/gfx1x_radix_topk.py"
+        )
         w8a8_copy = (
             "COPY scripts/gfx1x_w8a8_bf16.py "
             "/opt/vllm/vllm/model_executor/kernels/linear/scaled_mm/"
@@ -265,11 +351,18 @@ class DeepSeekV4Gfx1xPatchTests(unittest.TestCase):
         run_patch = "RUN python /opt/vllm/patch_strix.py"
         self.assertIn(helper_copy, dockerfile)
         self.assertIn(tilelang_copy, dockerfile)
+        self.assertIn(radix_topk_copy, dockerfile)
         self.assertIn(w8a8_copy, dockerfile)
         self.assertLess(dockerfile.index(helper_copy), dockerfile.index(run_patch))
         self.assertLess(dockerfile.index(tilelang_copy), dockerfile.index(run_patch))
+        self.assertLess(
+            dockerfile.index(radix_topk_copy), dockerfile.index(run_patch)
+        )
         self.assertLess(dockerfile.index(w8a8_copy), dockerfile.index(run_patch))
         self.assertIn(patch_dsv4_gfx1x.SPARSE_MARKER.removeprefix("# "), dockerfile)
+        self.assertIn(
+            patch_dsv4_gfx1x.RADIX_TOPK_MARKER.removeprefix("# "), dockerfile
+        )
         self.assertIn(patch_dsv4_gfx1x.LINEAR_MARKER.removeprefix("# "), dockerfile)
         self.assertIn(
             patch_dsv4_gfx1x.CACHED_LINEAR_MARKER.removeprefix("# "), dockerfile

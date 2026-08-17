@@ -9,6 +9,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 OPT_WARMUP_SCRIPT = Path("/opt/vllm_warmup.py")
+DEFAULT_COLLECTIVE_PROFILE_DIR = Path.home() / ".cache" / "vllm" / "profiles"
 
 
 def speculative_config_args(config, enabled):
@@ -19,6 +20,32 @@ def speculative_config_args(config, enabled):
     return [
         "--speculative-config",
         json.dumps(speculative_config, separators=(",", ":"), sort_keys=True),
+    ]
+
+
+def collective_profiler_args(enabled, profile_dir=None):
+    """Return an opt-in multi-rank Torch profiler configuration.
+
+    Profiling remains dormant until the API's ``/start_profile`` route is
+    called. Shape recording identifies the real TP collective tensors; stacks
+    and memory tracking stay off to keep the controlled run reasonably small.
+    """
+    if not enabled:
+        return []
+    directory = Path(profile_dir or DEFAULT_COLLECTIVE_PROFILE_DIR).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    config = {
+        "profiler": "torch",
+        "torch_profiler_dir": str(directory),
+        "torch_profiler_record_shapes": True,
+        "torch_profiler_with_stack": False,
+        "torch_profiler_with_memory": False,
+        "torch_profiler_use_gzip": True,
+        "ignore_frontend": True,
+    }
+    return [
+        "--profiler-config",
+        json.dumps(config, separators=(",", ":"), sort_keys=True),
     ]
 
 

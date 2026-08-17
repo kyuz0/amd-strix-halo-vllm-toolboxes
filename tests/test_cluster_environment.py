@@ -38,6 +38,8 @@ class ClusterEnvironmentTests(unittest.TestCase):
         self.assertEqual(deepseek["VLLM_ROCM_USE_AITER_LINEAR"], "0")
         self.assertEqual(deepseek["VLLM_GFX1X_W8A8_BF16"], "1")
         self.assertEqual(deepseek["VLLM_GFX1X_W8A8_BF16_DIRECT"], "1")
+        self.assertEqual(deepseek["VLLM_GFX1X_MOE_TUNE"], "1")
+        self.assertEqual(deepseek["VLLM_GFX1X_RADIX_TOPK"], "1")
 
     def test_both_launchers_apply_the_selected_model_environment(self):
         expected = "env.update(models.get_model_env(config))"
