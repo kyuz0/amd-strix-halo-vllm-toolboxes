@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import subprocess
 import time
+import inspect
 from pathlib import Path
 
 # Add benchmarks dir to path to import config
@@ -364,7 +365,13 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
     env["TRITON_CACHE_DIR"] = str(get_triton_cache_dir())
     # Ray daemons start without model-specific AITER values. The driver supplies
     # explicit defaults here, with validated model policy applied last.
-    model_env = models.get_model_env(config, current_tp)
+    # get_model_env is tp-aware (env_by_tp) on some revisions of models.py and
+    # config-only on newer ones. Adapt to the signature present so the launcher
+    # works with whichever models.py ships in the container/image.
+    if len(inspect.signature(models.get_model_env).parameters) > 1:
+        model_env = models.get_model_env(config, current_tp)
+    else:
+        model_env = models.get_model_env(config)
     env.update(model_env)
     env["RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES"] = "1"
     env["VLLM_HOST_IP"] = head_ip
