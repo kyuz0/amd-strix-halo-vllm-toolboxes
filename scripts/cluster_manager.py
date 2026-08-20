@@ -298,7 +298,7 @@ def setup_worker_node(worker_ip, head_ip, toolbox_name):
     # Calculate Interface dynamically
     RDMA_IFACE=$(ip -o addr show to {subnet} | awk '{{print $2}}' | head -n1)
     
-    echo "\\n--- Ray Worker Environment ({worker_ip}) ---"
+    echo "\n--- Ray Worker Environment ({worker_ip}) ---"
     echo "transport={transport} ({transport_label})"
 
     export RAY_DISABLE_METRICS=1
@@ -362,7 +362,7 @@ def setup_head_node(head_ip):
     # Calculate Interface dynamically
     RDMA_IFACE=$(ip -o addr show to {subnet} | awk '{{print $2}}' | head -n1)
     
-    echo "\\n--- Ray Head Environment ({head_ip}) ---"
+    echo "\n--- Ray Head Environment ({head_ip}) ---"
     echo "transport={transport} ({transport_label})"
 
     export RAY_DISABLE_METRICS=1

@@ -380,6 +380,9 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
     # matches the Ray head/worker setup done under the same choice.
     transport = cluster_manager.resolve_transport()
     cluster_manager.warn_multi_rdma(transport)
+    # VLLM_CLUSTER_TRANSPORT is a launcher-only variable; drop it from the vLLM
+    # process env so vLLM's env whitelist does not flag it as unknown.
+    env.pop("VLLM_CLUSTER_TRANSPORT", None)
     transport_env = cluster_manager.transport_env(transport, rdma_iface)
     for key in (
         "NCCL_SOCKET_IFNAME",
