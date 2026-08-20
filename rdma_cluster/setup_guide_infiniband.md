@@ -20,7 +20,7 @@ routed Ethernet network entirely.
 > native-IB HCA on both nodes. The transport wiring below is the validated
 > configuration for this cluster setup.
 >
-> Refer to the the community wiki for details of a low budget infiniband hardware setup:
+> Refer to the the Strix Halo community wiki for details of a low budget infiniband hardware setup with Oculink:
 > <https://strixhalo.wiki/AI/Clustering_with_RDMA>
 
 ## Table of Contents
@@ -39,9 +39,9 @@ routed Ethernet network entirely.
 *   **Nodes**: 2x Strix Halo hosts (see the [main setup guide](setup_guide.md) for
     the base host/kernel/BIOS configuration).
 *   **HCAs**: one InfiniBand HCA per node. Both ports must be up and cabled
-    together, or plugged into an IB switch.
+    together. Use a DAC, a direct copper cable connection to get the lowest latency. 
 *   **Subnet Manager (opensm)**: native IB has **no self-managed fabric** — one
-    node (typically the head, here `fuzzy`) must run an InfiniBand Subnet Manager
+    node (typically the head) must run an InfiniBand Subnet Manager
     (`opensm`). Without it the ports will not reach `ACTIVE` state.
 *   **Control plane**: Ray / GLOO rendezvous and the management interface still
     run over Ethernet (the interface carrying `head_ip`/`worker_ip`). Only the
