@@ -2,6 +2,9 @@
 
 This guide details how to configure a two-node **AMD Strix Halo** cluster linked via **Intel E810 (RoCE v2)** for distributed vLLM inference using Tensor Parallelism.
 
+> **Native InfiniBand?** If you are running the cluster over a dedicated IB HCA
+> instead of RoCE, see the dedicated [InfiniBand Setup Guide](setup_guide_infiniband.md).
+
 ## Table of Contents
 
 1. [TL;DR (Quick Start)](#1-tldr-quick-start)
@@ -37,9 +40,18 @@ This guide details how to configure a two-node **AMD Strix Halo** cluster linked
 4.  **Run Cluster**:
     *   Run `start-vllm-cluster`.
     *   Select **"2. Start Ray Cluster"** (Follow prompts using the TUI).
+    *   When prompted, pick the **transport** — **`roce`** for the E810 (default
+        `auto` also works and falls back from InfiniBand to RoCE to Ethernet).
+        The choice is remembered for the subsequent vLLM launch.
     *   Select **"4. Launch VLLM Serve"** and choose your model. (Export `HF_TOKEN` first for gated models!)
 
 **Key Note**: The `refresh_toolbox.sh` script detects your Infiniband/RDMA devices and automatically configures the container to expose them.
+
+**HCA pinning**: To force a specific RDMA device instead of the auto-detected
+one, export `VLLM_IB_HCA=<device>:<port>` (native InfiniBand) or
+`VLLM_ROCE_HCA=<device>:<port>` (RoCE) before running `start-vllm-cluster`.
+If several active RDMA ports exist, the launcher prints a warning listing the
+candidates and the effective HCA.
 
 ---
 
@@ -283,6 +295,9 @@ A TUI utility, `start-vllm-cluster`, is provided to manage the Ray cluster and v
 4.  **Start Ray Cluster** (Option 2):
     *   **On Node 1**: Select **"Head"** when prompted.
     *   **On Node 2**: Select **"Worker"** when prompted.
+    *   Select a **transport** — `roce` (E810), `infiniband`, `ethernet`, or
+        `auto` (InfiniBand → RoCE → Ethernet). The choice is applied to the
+        Ray head/worker NCCL env and remembered for the vLLM launch.
     *   The script effectively runs:
         ```bash
         # Head
