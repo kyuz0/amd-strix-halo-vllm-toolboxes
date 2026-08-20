@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import subprocess
 import time
+import inspect
 from pathlib import Path
 
 # Add benchmarks dir to path to import config
@@ -364,13 +365,39 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
     env["TRITON_CACHE_DIR"] = str(get_triton_cache_dir())
     # Ray daemons start without model-specific AITER values. The driver supplies
     # explicit defaults here, with validated model policy applied last.
-    model_env = models.get_model_env(config, current_tp)
+    # get_model_env is tp-aware (env_by_tp) on some revisions of models.py and
+    # config-only on newer ones. Adapt to the signature present so the launcher
+    # works with whichever models.py ships in the container/image.
+    if len(inspect.signature(models.get_model_env).parameters) > 1:
+        model_env = models.get_model_env(config, current_tp)
+    else:
+        model_env = models.get_model_env(config)
     env.update(model_env)
     env["RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES"] = "1"
     env["VLLM_HOST_IP"] = head_ip
-    env["NCCL_SOCKET_IFNAME"] = rdma_iface
-    env["NCCL_IB_GID_INDEX"] = "1"
-    env["NCCL_NET_GDR_LEVEL"] = "0"
+
+    # Apply the cluster transport (ethernet / roce / infiniband) so the driver
+    # matches the Ray head/worker setup done under the same choice.
+    transport = cluster_manager.resolve_transport()
+    cluster_manager.warn_multi_rdma(transport)
+    # VLLM_CLUSTER_TRANSPORT is a launcher-only variable; drop it from the vLLM
+    # process env so vLLM's env whitelist does not flag it as unknown.
+    env.pop("VLLM_CLUSTER_TRANSPORT", None)
+    transport_env = cluster_manager.transport_env(transport, rdma_iface)
+    for key in (
+        "NCCL_SOCKET_IFNAME",
+        "NCCL_IB_GID_INDEX",
+        "NCCL_IB_HCA",
+        "NCCL_IB_DISABLE",
+        "NCCL_IB_TIMEOUT",
+        "NCCL_IB_RETRY_CNT",
+        "NCCL_NET_GDR_LEVEL",
+        "NCCL_PROTO",
+        "NCCL_ALGO",
+        "GLOO_SOCKET_IFNAME",
+    ):
+        env.pop(key, None)
+    env.update(transport_env)
     
     cmd = [
         "vllm", "serve", model_id,
@@ -413,6 +440,7 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
     print(f" Model:     {name}")
     print(f" Config:    TP={current_tp} | Seqs={current_seqs} | Ctx={current_ctx}")
     print(f" Backend:   {current_attn_backend}")
+    print(f" Transport: {transport} ({cluster_manager.TRANSPORT_LABELS.get(transport, transport)})")
     print(f" Speculate: {'native DSpark block' if use_speculative else 'disabled'}")
     print(f" Warmup:    {'automatic' if use_warmup else 'disabled'}")
     print(
@@ -426,12 +454,19 @@ def configure_and_launch_vllm(model_idx, head_ip, remote_toolbox):
         
     print("\n --- Environment Variables ---")
     vars_to_print = [
+        "VLLM_CLUSTER_TRANSPORT",
         "RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES",
         "TRITON_CACHE_DIR",
         "VLLM_HOST_IP",
         "NCCL_SOCKET_IFNAME",
         "NCCL_IB_GID_INDEX",
-        "NCCL_NET_GDR_LEVEL"
+        "NCCL_IB_HCA",
+        "NCCL_IB_DISABLE",
+        "NCCL_IB_TIMEOUT",
+        "NCCL_IB_RETRY_CNT",
+        "NCCL_NET_GDR_LEVEL",
+        "NCCL_PROTO",
+        "NCCL_ALGO"
     ]
     for key in model_env:
         if key not in vars_to_print:
@@ -526,29 +561,43 @@ def main():
                 head_ip, worker_ip = res
 
         elif choice == "3":
-            force_ethernet = False
             enable_nccl_debug = False
+            transport = os.getenv("VLLM_CLUSTER_TRANSPORT", "auto")
             
             while True:
-                eth_status = "YES" if force_ethernet else "NO"
                 debug_status = "YES" if enable_nccl_debug else "NO"
                 
                 c_choice = run_dialog([
                     "--clear", "--backtitle", "AMD VLLM RCCL Cluster Manager",
                     "--title", "Cluster Network Configuration",
-                    "--menu", f"Worker toolbox: {remote_toolbox}", "15", "72", "3",
-                    "1", f"Force Ethernet (Disable RDMA/RoCE):  {eth_status}",
+                    "--menu",
+                    f"Worker toolbox: {remote_toolbox}\n"
+                    f"Transport: {cluster_manager.TRANSPORT_LABELS.get(transport, transport)}",
+                    "15", "72", "3",
+                    "1", "Select Transport",
                     "2", f"Enable NCCL Debug Logging:           {debug_status}",
                     "3", "START CLUSTER"
                 ])
                 if not c_choice: break
                 
                 if c_choice == "1":
-                    force_ethernet = not force_ethernet
+                    transport_items = []
+                    for t in cluster_manager.TRANSPORTS:
+                        transport_items.extend([t, cluster_manager.TRANSPORT_LABELS[t]])
+                    sel = run_dialog([
+                        "--title", "Select Transport",
+                        "--default-item", transport,
+                        "--menu", "Choose the cluster fabric transport:",
+                        "14", "78", str(len(cluster_manager.TRANSPORTS)),
+                    ] + transport_items)
+                    if sel:
+                        transport = sel
                 elif c_choice == "2":
                     enable_nccl_debug = not enable_nccl_debug
                 elif c_choice == "3":
-                    os.environ["NCCL_IB_DISABLE"] = "1" if force_ethernet else "0"
+                    # Persisted across menu steps in this process; both the Ray
+                    # head/worker setup and the vllm launch read it.
+                    os.environ["VLLM_CLUSTER_TRANSPORT"] = transport
                     if enable_nccl_debug:
                         os.environ["NCCL_DEBUG"] = "INFO"
                         os.environ["NCCL_DEBUG_SUBSYS"] = "INIT,NET"
@@ -558,6 +607,7 @@ def main():
                     
                     subprocess.run(["clear"])
                     print("= Starting Ray Cluster Setup =")
+                    print(f"= Transport: {cluster_manager.TRANSPORT_LABELS.get(transport, transport)} =")
                     # 1. Start Head
                     if setup_head_node(head_ip):
                         print("Head node started successfully. Waiting 5s before worker connection...")

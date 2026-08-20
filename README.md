@@ -315,14 +315,21 @@ sudo reboot
 
 ## 7) Distributed Clustering (RDMA/RoCE)
 
-This toolbox supports clustering multiple Strix Halo nodes using Ethernet or RDMA/RoCE (for example, with an Intel E810). This enables **Tensor Parallelism** across machines.
+This toolbox supports clustering multiple Strix Halo nodes over **Ethernet**,
+**RDMA/RoCE** (for example, with an Intel E810), or **native InfiniBand** (with
+a dedicated IB HCA). This enables **Tensor Parallelism** across machines. The
+`start-vllm-cluster` launcher's **Select Transport** menu lets you pick the
+fabric per cluster start.
 
-**Detailed Documentation:** [RDMA Cluster Setup Guide](rdma_cluster/setup_guide.md)
+**Detailed Documentation:**
+*   [RDMA Cluster Setup Guide](rdma_cluster/setup_guide.md) — Ethernet and RDMA/RoCE (Intel E810).
+*   [InfiniBand Cluster Setup Guide](rdma_cluster/setup_guide_infiniband.md) — native InfiniBand (dedicated IB HCA).
 
 **Key Features:**
-*   **RCCL validation:** TP=2 has been tested over both Ethernet and RDMA/RoCE.
-*   **Easy Setup:** `refresh_toolbox.sh` automatically detects and exposes RDMA devices.
-*   **Cluster Management:** Included `start-vllm-cluster` TUI for managing Ray and vLLM.
+*   **RCCL validation:** TP=2 has been tested over Ethernet, RDMA/RoCE, and native InfiniBand.
+*   **Easy Setup:** `refresh_toolbox.sh` automatically detects and exposes RDMA/IB devices.
+*   **Cluster Management:** Included `start-vllm-cluster` TUI for managing Ray and vLLM, with a per-fabric transport selector (Auto / InfiniBand / RDMA-RoCE / Ethernet).
+*   **HCA pinning:** Set `VLLM_IB_HCA=<device>:<port>` (InfiniBand) or `VLLM_ROCE_HCA=<device>:<port>` (RoCE) to force a specific RDMA device; if several active RDMA ports exist the launcher warns and pins one so RCCL never sees an ambiguous HCA match.
 
 ## 8) AITER on Strix Halo Support Status
 
