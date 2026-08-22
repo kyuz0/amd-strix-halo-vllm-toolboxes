@@ -90,6 +90,12 @@ RUN if [ -n "$VLLM_COMMIT" ]; then \
 COPY scripts/patch_strix.py /opt/vllm/patch_strix.py
 RUN python /opt/vllm/patch_strix.py
 
+# Shorten the shm-broadcast reader busy-loop (busy_loop_s 1 s -> 2 ms): TP>=2
+# readers otherwise spin cores between decode steps, stealing SoC power and
+# thermal headroom from the GPU on Strix Halo. Fails closed if upstream moves.
+COPY scripts/patch_shm_spin.py /opt/vllm/patch_shm_spin.py
+RUN python /opt/vllm/patch_shm_spin.py
+
 # --- FP8 (W8A8) Strix Halo Triton kernels (EXPERIMENTAL / RFC — see issue #67) ---
 # Custom FP8 kernels by @leonyurko for gfx1151 (which has no native FP8). The kernel
 # modules live on PYTHONPATH (/opt/fp8); patch_fp8_kernels.py routes vLLM's

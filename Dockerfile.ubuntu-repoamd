@@ -128,12 +128,14 @@ RUN git clone https://github.com/vllm-project/vllm.git /opt/vllm && \
 WORKDIR /opt/vllm
 COPY scripts/patch_strix.py /opt/vllm/patch_strix.py
 COPY scripts/patch_dsv4_gfx1x.py /opt/vllm/patch_dsv4_gfx1x.py
+COPY scripts/patch_shm_spin.py /opt/vllm/patch_shm_spin.py
 COPY scripts/verify_vllm_compat.py /opt/vllm/verify_vllm_compat.py
 COPY scripts/patch_conch_moe_gfx1x.py /opt/patch_conch_moe_gfx1x.py
 COPY scripts/gfx1x_tilelang_mqa.py /opt/vllm/vllm/v1/attention/ops/gfx1x_tilelang_mqa.py
 COPY scripts/gfx1x_radix_topk.py /opt/vllm/vllm/v1/attention/ops/gfx1x_radix_topk.py
 COPY scripts/gfx1x_w8a8_bf16.py /opt/vllm/vllm/model_executor/kernels/linear/scaled_mm/gfx1x_w8a8_bf16.py
 RUN python /opt/vllm/patch_strix.py && \
+    python /opt/vllm/patch_shm_spin.py && \
     python /opt/vllm/verify_vllm_compat.py
 RUN python -m py_compile \
       /opt/vllm/vllm/v1/attention/ops/gfx1x_tilelang_mqa.py \
@@ -146,7 +148,9 @@ RUN python -m py_compile \
     && grep -q "PATCHED: gfx1x block-FP8 GEMM uses BF16 tl.dot" \
       /opt/vllm/vllm/model_executor/layers/quantization/utils/fp8_utils.py \
     && grep -q "PATCHED: gfx1x cached-BF16 W8A8 linear" \
-      /opt/vllm/vllm/model_executor/kernels/linear/scaled_mm/triton.py
+      /opt/vllm/vllm/model_executor/kernels/linear/scaled_mm/triton.py \
+    && grep -q "PATCHED: gfx1151 shm reader spin" \
+      /opt/vllm/vllm/distributed/device_communicators/shm_broadcast.py
 RUN grep -q "rocm_aiter_ops.refresh_env_variables()" \
       /opt/vllm/vllm/v1/executor/ray_executor_v2.py \
     && grep -q "refresh_gfx1x_w8a8_env()" \

@@ -289,6 +289,18 @@ Comments inside `patch_strix.py` also record removed historical patches. Preserv
 those notes during upgrades: they prevent obsolete workarounds from being
 accidentally resurrected.
 
+## Shared-memory broadcast reader spin
+
+Owned by `scripts/patch_shm_spin.py`.
+
+| Upstream path | Local behavior | Update audit |
+|---|---|---|
+| `vllm/distributed/device_communicators/shm_broadcast.py` | Shortens `SpinCondition`'s reader-side `busy_loop_s` default from 1 s to 2 ms, so TP≥2 reader processes park in the event-driven zmq poller wait between decode steps instead of spinning cores for up to a second. CPU and GPU share one SoC power/thermal budget on Strix Halo; pinned cores steal frequency from inference. Reads within 2 ms still take the sched_yield fast path. Mirrors the runtime hotfix in the MiaAI-Lab DSpark two-node recipe (their issue #79). | Check whether upstream shortened the default, made the busy-loop window configurable (env or constructor plumbing), or replaced `SpinCondition`. Verify idle-core behavior on a TP=2 serve before removal. Still shipping at v0.27.1 (`busy_loop_s: float = 1`). |
+
+Build marker: `PATCHED: gfx1151 shm reader spin`.
+
+Tests: `tests/test_patch_shm_spin.py`.
+
 ## Non-vLLM build-time patches
 
 | Patcher/path | Local behavior | Update audit |
