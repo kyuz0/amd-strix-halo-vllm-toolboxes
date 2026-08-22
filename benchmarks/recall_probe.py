@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """RULER-style long-context recall probe for a live vLLM OpenAI endpoint.
 
-Synthetic needle-in-a-haystack style checks sized to an exact context target:
-the prompt filler is grown/corrected until /tokenize confirms at least
---min-token-frac (default 0.97) of the requested context length, so a
-"32k PASS" really means a ~32k prompt was sent. Complements the manifest's
-upgrade-procedure recall requirement (docs/VLLM_PATCH_MANIFEST.md) with
-something runnable against any host.
+Synthetic needle-in-a-haystack style checks sized to an exact context target.
+When the server exposes /tokenize, prompts are corrected before generation;
+otherwise (and additionally) the authoritative size comes from
+``usage.prompt_tokens`` on each completion, with one grow-and-resend round
+when a prompt lands under --min-token-frac (default 0.97) of the requested
+context length. A "32k PASS" therefore really means a ~32k prompt was billed.
+Complements the manifest's upgrade-procedure recall requirement
+(docs/VLLM_PATCH_MANIFEST.md) with something runnable against any host.
 
 Tasks:
   niah           one needle (magic number for a key) in neutral filler
@@ -31,6 +33,7 @@ Examples:
 import argparse
 import json
 import random
+import re
 import sys
 
 import requests
@@ -71,18 +74,58 @@ def _post(base_url, path, payload, api_key, request_timeout):
     )
 
 
+# vLLM serves /tokenize at the server root even when the OpenAI API sits
+# under /v1; older builds exposed neither path. Cache whichever URL answers.
+_TOKENIZE_URL = None
+
+
+def _tokenize_url_candidates(base_url):
+    base = base_url.rstrip("/")
+    root = re.sub(r"/v1/?$", "", base)
+    candidates = [base + "/tokenize", root + "/tokenize"]
+    if _TOKENIZE_URL:
+        candidates.insert(0, _TOKENIZE_URL)
+    seen, ordered = set(), []
+    for u in candidates:
+        if u not in seen:
+            seen.add(u)
+            ordered.append(u)
+    return ordered
+
+
 def count_tokens(base_url, model, api_key, request_timeout, text):
-    """Tokenize via the server so context claims are real, not estimated."""
-    try:
-        r = _post(
-            base_url, "/tokenize",
-            {"model": model, "messages": [{"role": "user", "content": text}]},
-            api_key, request_timeout,
-        )
-        r.raise_for_status()
-        return len(r.json()["tokens"])
-    except Exception:
-        return None
+    """Tokenize via the server so context claims are exact, not estimated.
+
+    Returns None when no tokenize endpoint answers; callers then fall back
+    to post-hoc sizing from usage.prompt_tokens.
+    """
+    global _TOKENIZE_URL
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    for url in _tokenize_url_candidates(base_url):
+        try:
+            r = requests.post(
+                url,
+                json={"model": model,
+                      "messages": [{"role": "user", "content": text}]},
+                headers=headers,
+                timeout=request_timeout,
+            )
+            r.raise_for_status()
+        except Exception:
+            continue
+        _TOKENIZE_URL = url
+        body = r.json()
+        count = body.get("count")
+        if count is None:
+            count = len(body.get("tokens") or [])
+        return int(count)
+    return None
+
+
+def server_has_tokenize(base_url, model, api_key):
+    return count_tokens(base_url, model, api_key, 15, "ping") is not None
 
 
 def _stable_task_offset(name):
@@ -197,43 +240,85 @@ TASKS = {
 
 
 def run_one(base_url, model, api_key, request_timeout, max_tokens,
-            task_name, target_tokens, seed, min_frac, place_frac=0.5):
+            task_name, target_tokens, seed, min_frac, thinking,
+            use_tokenize, cal, place_frac=0.5):
     offset = _stable_task_offset(task_name)
     make, question, scorer = TASKS[task_name](seed + target_tokens + offset)
 
-    # Grow/correct the filler until /tokenize confirms the target window.
-    est_units = max(64, int(target_tokens * min_frac) // 32)
-    text, expected = make(place_frac, est_units)
-    full = f"{text}\n\nQuestion: {question}\nAnswer:"
-    tok = count_tokens(base_url, model, api_key, request_timeout, full)
+    def build(units):
+        text, expected = make(place_frac, units)
+        return (f"{text}\n\nQuestion: {question}\nAnswer:", expected)
 
-    tries = 0
-    while tok is not None and tries < 8:
-        if tok < target_tokens * min_frac:
-            est_units = int(est_units * (target_tokens * 0.99) / max(tok, 1)) + 8
-        elif tok > target_tokens * 1.03:
-            est_units = max(64, int(est_units * (target_tokens * 0.99) / tok))
-        else:
-            break
-        text, expected = make(place_frac, est_units)
-        full = f"{text}\n\nQuestion: {question}\nAnswer:"
-        tok = count_tokens(base_url, model, api_key, request_timeout, full)
-        tries += 1
-
-    row = {
-        "task": task_name,
-        "requested_context": target_tokens,
-        "tokenized_context": tok,
-    }
-    try:
-        r = _post(base_url, "/chat/completions", {
+    def send(full):
+        payload = {
             "model": model,
             "messages": [{"role": "user", "content": full}],
             "temperature": 0,
             "max_tokens": max_tokens,
-        }, api_key, request_timeout)
+        }
+        if not thinking:
+            # Reasoning would burn the token budget before the answer;
+            # recall probes want direct retrieval.
+            payload["chat_template_kwargs"] = {"thinking": False}
+        r = _post(base_url, "/chat/completions", payload,
+                  api_key, request_timeout)
         r.raise_for_status()
-        content = (r.json()["choices"][0]["message"]["content"] or "")
+        return r.json()
+
+    # Calibrated filler sizing: tokens per FILLER unit, learned from the
+    # first completion's usage and reused for every later row in this run.
+    if cal.get("tokens_per_unit"):
+        est_units = max(64, int(target_tokens * 0.99 / cal["tokens_per_unit"]))
+    else:
+        est_units = max(64, int(target_tokens * min_frac) // 32)
+    full, expected = build(est_units)
+
+    if use_tokenize:
+        # Correct the estimate before paying for a prefill.
+        tok = count_tokens(base_url, model, api_key, request_timeout, full)
+        tries = 0
+        while tok is not None and tries < 8:
+            cal["tokens_per_unit"] = max(tok, 1) / max(est_units, 1)
+            if tok < target_tokens * min_frac:
+                est_units = int(est_units * (target_tokens * 0.99) / max(tok, 1)) + 8
+            elif tok > target_tokens * 1.03:
+                est_units = max(64, int(est_units * (target_tokens * 0.99) / tok))
+            else:
+                break
+            full, expected = build(est_units)
+            tok = count_tokens(base_url, model, api_key, request_timeout, full)
+            tries += 1
+
+    row = {
+        "task": task_name,
+        "requested_context": target_tokens,
+    }
+
+    def absorb(body):
+        """Record usage + answer; returns prompt_tokens (0 if absent)."""
+        usage = body.get("usage") or {}
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        if prompt_tokens and est_units:
+            cal["tokens_per_unit"] = prompt_tokens / est_units
+        content = (body["choices"][0]["message"]["content"] or "")
+        return prompt_tokens, content
+
+    try:
+        body = send(full)
+        prompt_tokens, content = absorb(body)
+        resized = None
+        if prompt_tokens and not (min_frac * target_tokens
+                                  <= prompt_tokens <= target_tokens * 1.03):
+            # One corrective resend: grow when under target, shrink when over.
+            resized = "grow" if prompt_tokens < min_frac * target_tokens else "shrink"
+            est_units = max(
+                64, int(est_units * (target_tokens * 0.99) / prompt_tokens))
+            full, expected = build(est_units)
+            body = send(full)
+            prompt_tokens, content = absorb(body)
+        row["tokenized_context"] = prompt_tokens
+        if resized:
+            row["resized"] = resized
         row["response_excerpt"] = content[:200]
         if task_name == "cwe":
             found = scorer(content, expected)
@@ -246,12 +331,14 @@ def run_one(base_url, model, api_key, request_timeout, max_tokens,
             row["status"] = "PASS" if hit else "FAIL"
     except requests.exceptions.Timeout:
         row["status"] = "ERROR"
+        row["tokenized_context"] = None
         row["error"] = (
             f"client timeout after {request_timeout}s - raise "
             "--request-timeout; this is not scored as a model failure"
         )
     except Exception as exc:  # noqa: BLE001
         row["status"] = "ERROR"
+        row["tokenized_context"] = None
         row["error"] = f"{type(exc).__name__}: {exc}"[:300]
     return row
 
@@ -270,6 +357,9 @@ def main():
                    help="per-request client timeout in seconds")
     p.add_argument("--min-token-frac", type=float, default=0.97,
                    help="/tokenize must confirm at least this fraction")
+    p.add_argument("--thinking", action="store_true",
+                   help="leave the server's thinking mode enabled; default "
+                        "disables it per request so the budget reaches the answer")
     p.add_argument("--seed", type=int, default=1234)
     p.add_argument("--output", default=None, help="write the JSON report here")
     args = p.parse_args()
@@ -281,12 +371,19 @@ def main():
         model = r.json()["data"][0]["id"]
         print(f"discovered model: {model}")
 
+    use_tokenize = server_has_tokenize(args.base_url, model, args.api_key)
+    if not use_tokenize:
+        print("no /tokenize on this server; sizing verified post-hoc via "
+              "usage.prompt_tokens (one corrective resend when outside target)")
+
+    cal = {"tokens_per_unit": None}
     results = []
     for target in args.lengths:
         for task in args.tasks:
             row = run_one(args.base_url, model, args.api_key,
                           args.request_timeout, args.max_tokens,
-                          task, target, args.seed, args.min_token_frac)
+                          task, target, args.seed, args.min_token_frac,
+                          args.thinking, use_tokenize, cal)
             results.append(row)
             brief = row.get("response_excerpt") or row.get("error", "")
             extra = ""

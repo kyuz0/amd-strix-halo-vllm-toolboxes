@@ -37,10 +37,15 @@ SPEC_PREFIX = "vllm:spec_decode_"
 POS_RE = re.compile(r"_per_pos(\d+)$")
 
 
+def _metrics_url(base_url):
+    # /metrics is served at the server root even when the OpenAI API sits
+    # under /v1, so accept either form of --base-url.
+    return re.sub(r"/v1/?$", "", base_url.rstrip("/")) + "/metrics"
+
+
 def snapshot_spec_counters(base_url, api_key):
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    r = requests.get(base_url.rstrip("/") + "/metrics", headers=headers,
-                     timeout=30)
+    r = requests.get(_metrics_url(base_url), headers=headers, timeout=30)
     r.raise_for_status()
     totals = {}
     for line in r.text.splitlines():
@@ -78,7 +83,12 @@ def drive_burst(base_url, model, api_key, prompt, num_requests, concurrency,
                           json=payload, headers=headers,
                           timeout=request_timeout)
         r.raise_for_status()
-        return len(r.json()["choices"][0]["message"]["content"] or "")
+        body = r.json()
+        # Count billed completion tokens rather than visible content:
+        # reasoning-mode servers can return null content while still
+        # generating (and drafting) the full budget.
+        usage = body.get("usage") or {}
+        return int(usage.get("completion_tokens") or 0)
 
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
         outs = list(pool.map(one, range(num_requests)))
@@ -177,7 +187,7 @@ def main():
                            args.num_requests, args.concurrency,
                            args.max_tokens, args.request_timeout)
         print(f"burst complete: {len(lens)} requests, "
-              f"{sum(lens)} generated chars total")
+              f"{sum(lens)} completion tokens total")
 
         after = snapshot_spec_counters(args.base_url, args.api_key)
         report(before, after, args.output)
