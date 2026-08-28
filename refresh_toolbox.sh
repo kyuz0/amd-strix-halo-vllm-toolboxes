@@ -105,6 +105,21 @@ $RUNTIME pull "$IMAGE"
 new_id="$($RUNTIME image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || true)"
 new_digest="$($RUNTIME image inspect --format '{{.Digest}}' "$IMAGE" 2>/dev/null || true)"
 
+# Pin the pulled image under a local date-stamped tag so rollbacks survive
+# the next :latest refresh (which would otherwise untag this image -> cleanup).
+# Format matches the CI's own YYYYMMDD-HHMMSS tag, sourced from the
+# org.opencontainers.image.created label.
+repo_no_tag="${IMAGE%:*}"
+created_iso="$($RUNTIME image inspect --format '{{index .Labels "org.opencontainers.image.created"}}' "$IMAGE" 2>/dev/null || true)"
+if [[ -n "$created_iso" && "$created_iso" != "<no value>" ]]; then
+    date_tag_value="$(date -u -d "$created_iso" +%Y%m%d-%H%M%S 2>/dev/null || true)"
+    if [[ -n "$date_tag_value" ]]; then
+        date_tag="${repo_no_tag}:${date_tag_value}"
+        echo "🏷  Local tag: $date_tag"
+        $RUNTIME tag "$new_id" "$date_tag" >/dev/null 2>&1 || true
+    fi
+fi
+
 echo "📦 Recreating $MANAGER: $TOOLBOX_NAME"
 echo "   Options: $OPTIONS"
 
