@@ -3,9 +3,9 @@
 # Multi-stage toolbox image with WORKING VISION and the complete matched ROCm development SDK.
 #
 # Off the nightly treadmill: the whole gfx1151 ROCm/torch stack is STABLE release wheels from
-# https://repo.amd.com/rocm/whl-multi-arch/ (TheRock multi-arch device-package layout; ROCm
-# 7.14). torch brings its own matched ROCm (_rocm_sdk_core) → no system-vs-pip ABI mismatch
-# (that mix segfaulted the old dev-ubuntu:7.14 + nightly-torch attempt).
+# https://stable.repo.amd.com/rocm/whl-next/ (TheRock explicit-device package layout; ROCm
+# 10.0). torch brings its own matched ROCm (_rocm_sdk_core) → no system-vs-pip ABI mismatch
+# (that mix segfaulted the old system-ROCm + nightly-torch attempt).
 #
 # Vision: gfx1151 vLLM would fall back to Torch SDPA for the ViT encoder (OOMs at 256 GiB),
 # so we build ROCm flash-attention + aiter Triton kernels and enable them
@@ -51,10 +51,10 @@ RUN python3.12 -m venv /opt/venv
 ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH PIP_NO_CACHE_DIR=1 PYTHONNOUSERSITE=1
 RUN python -m pip install --upgrade pip wheel packaging "setuptools<80.0.0" "setuptools-rust>=1.9.0"
 
-# STABLE gfx1151 stack from repo.amd.com — TheRock multi-arch "device package" layout:
+# STABLE gfx1151 stack from stable.repo.amd.com — TheRock explicit-device package layout:
 # a GENERIC base (torch, rocm-sdk-core/-libraries/-devel) + a thin PER-ARCH device package
 # (amd-torch-device-gfx1151, rocm-sdk-device-gfx1151) that overlays the gfx1151 kernels.
-# ROCm 7.14 lives here; the legacy per-arch whl/gfx1151/ index is frozen at 7.13.0.
+# ROCm 10.0 is the first stable release in AMD's new stream-specific whl-next index.
 # Torch stack is PINNED to a verified, mutually-compatible combo (the 4 packages are coupled,
 # and torch must match the vLLM we build) — bump deliberately. rocm-sdk-devel = build SDK.
 # SINGLE SOURCE OF TRUTH = TORCH_VERSION (+ ROCM_VERSION); everything else is ALIGNED to it:
@@ -62,9 +62,9 @@ RUN python -m pip install --upgrade pip wheel packaging "setuptools<80.0.0" "set
 #   - torchvision tracks torch as 0.(minor+15)  (torch 2.N -> torchvision 0.(N+15); 2.11 -> 0.26)
 # (pip left to itself picks the NEWEST torchvision, which is built for a newer torch — so we
 # derive it rather than let it float.) A torch bump needs only these two ARGs.
-ARG ROCM_WHL=https://repo.amd.com/rocm/whl-multi-arch/
+ARG ROCM_WHL=https://stable.repo.amd.com/rocm/whl-next/
 ARG TORCH_VERSION=2.11.0
-ARG ROCM_VERSION=7.14.0
+ARG ROCM_VERSION=10.0.0
 ARG AITER_REF=v0.1.19
 RUN set -e; \
     TV_MINOR=$(( $(echo "${TORCH_VERSION}" | cut -d. -f2) + 15 )); \
@@ -194,7 +194,8 @@ RUN python -m pip install ray
 # model-specific modules, including DeepSeek-V4 MHC, JIT-compile on the target gfx1151 host.
 RUN python -c "import importlib.util; assert importlib.util.find_spec('aiter'); print('aiter package installed OK')"
 RUN CORE=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core && \
-    ln -sf libamd_smi.so.26 "$CORE/lib/libamd_smi.so" && \
+    test -f "$CORE/lib/libamd_smi.so.27" && \
+    ln -sf libamd_smi.so.27 "$CORE/lib/libamd_smi.so" && \
     rm -rf /opt/vllm /root/.cache/pip
 
 # ============================ Stage 2: runtime ============================
@@ -328,7 +329,7 @@ RUN grep -q "aiter.ops.triton._triton_kernels.flash_attn_triton_amd" \
 # sampler. start-vllm enables AITER only for models such as DeepSeek V4 that use its
 # sparse-indexer helper, while selecting AITER unified attention explicitly where appropriate.
 ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH PYTHONNOUSERSITE=1 \
-    TOOLBOX_ROCM_SOURCE="repo.amd.com stable wheels" \
+    TOOLBOX_ROCM_SOURCE="stable.repo.amd.com ROCm 10.0 wheels" \
     ROCM_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core \
     HIP_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core \
     ROCM_DEVEL_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel \

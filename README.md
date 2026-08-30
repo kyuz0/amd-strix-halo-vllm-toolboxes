@@ -1,6 +1,6 @@
 # AMD Strix Halo (gfx1151) — vLLM Toolbox/Container
 
-An **Ubuntu 24.04-based**, Docker/Podman container that is **Toolbx-compatible** for serving LLMs with **vLLM** on **AMD Ryzen AI Max “Strix Halo” (gfx1151)**. The current image tracks the **stable ROCm 7.14 release** and the **latest stable vLLM release** at build time.
+An **Ubuntu 24.04-based**, Docker/Podman container that is **Toolbx-compatible** for serving LLMs with **vLLM** on **AMD Ryzen AI Max “Strix Halo” (gfx1151)**. The current image tracks the **stable ROCm 10.0 release** and the **latest stable vLLM release** at build time.
 
 ---
 
@@ -283,7 +283,7 @@ rocm-smi --showproductname          # should print your GPU name
 | **GPU Memory**    | 512 MB allocated in BIOS                                    |
 | **Host OS**       | Fedora 43, Linux 6.18.5-200.fc43.x86_64            |
 | **Container**     | Ubuntu 24.04                                             |
-| **ROCm**          | Stable ROCm 7.14                                        |
+| **ROCm**          | Stable ROCm 10.0                                        |
 | **vLLM**          | Latest stable release at image build time               |
 | **RCCL validation** | TP=2 tested over Ethernet and RDMA/RoCE                |
 

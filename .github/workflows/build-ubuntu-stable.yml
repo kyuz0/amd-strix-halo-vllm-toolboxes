@@ -5,8 +5,8 @@ name: build-ubuntu-stable
 # replaces the two former Ubuntu images (old dev-ubuntu base + the nightly variant) and is
 # what refresh_toolbox.sh pulls for the requested channel — see Dockerfile.ubuntu-repoamd.
 #
-# Off the nightly treadmill: STABLE release wheels from https://repo.amd.com/rocm/whl-multi-arch/
-# (TheRock multi-arch device-package layout, ROCm 7.14). torch brings its own matched ROCm ->
+# Off the nightly treadmill: STABLE release wheels from https://stable.repo.amd.com/rocm/whl-next/
+# (TheRock explicit-device package layout, ROCm 10.0). torch brings its own matched ROCm ->
 # no system-vs-pip ABI mismatch. Vision works via a ROCm flash-attention + aiter build (ViT
 # Flash Attention, not the SDPA path that OOMs). First serve autotunes the Triton GDN+ViT
 # kernels on the GPU (a few min); the launchers keep that cache under the host-shared HOME.
@@ -37,7 +37,7 @@ on:
 
 env:
   DOCKER_BUILDKIT: "1"
-  ROCM_WHL: https://repo.amd.com/rocm/whl-multi-arch/
+  ROCM_WHL: https://stable.repo.amd.com/rocm/whl-next/
 
 jobs:
   build:
@@ -69,16 +69,16 @@ jobs:
           TORCH_LIST=$(curl -fsSL "${ROCM_WHL}torch/")
           TV_LIST=$(curl -fsSL "${ROCM_WHL}torchvision/")
           TA_LIST=$(curl -fsSL "${ROCM_WHL}torchaudio/")
-          CANDS=$(printf '%s' "$DEV_LIST" \
-            | grep -oE 'amd_torch_device_gfx1151-[0-9][0-9.]*\+rocm[0-9.]+-cp312-cp312-linux' \
+          CANDS=$(grep -oE 'amd_torch_device_gfx1151-[0-9][0-9.]*\+rocm[0-9.]+-cp312-cp312-linux' \
+              <<< "$DEV_LIST" \
             | sed -E 's/^amd_torch_device_gfx1151-//; s/-cp312-cp312-linux$//' | sort -Vr | uniq)
           TORCH_VER=""; ROCM_VER=""
           for c in $CANDS; do
             t="${c%%+*}"; r="${c##*+rocm}"
             tvm=$(( $(echo "$t" | cut -d. -f2) + 15 )); tv="0.${tvm}.0"
-            printf '%s' "$TORCH_LIST" | grep -q "torch-${t}+rocm${r}-cp312-cp312-linux"            || continue
-            printf '%s' "$TV_LIST"    | grep -q "torchvision-${tv}+rocm${r}-cp312-cp312-linux"     || continue
-            printf '%s' "$TA_LIST"    | grep -q "torchaudio-${t}+rocm${r}-cp312-cp312-linux"       || continue
+            grep -q "torch-${t}+rocm${r}-cp312-cp312-linux"        <<< "$TORCH_LIST" || continue
+            grep -q "torchvision-${tv}+rocm${r}-cp312-cp312-linux" <<< "$TV_LIST"    || continue
+            grep -q "torchaudio-${t}+rocm${r}-cp312-cp312-linux"   <<< "$TA_LIST"    || continue
             TORCH_VER="$t"; ROCM_VER="$r"; break
           done
           [ -n "$TORCH_VER" ] || { echo "no complete gfx1151 torch stack found on ${ROCM_WHL}" >&2; exit 1; }

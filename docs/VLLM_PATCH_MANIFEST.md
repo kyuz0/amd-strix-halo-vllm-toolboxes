@@ -8,8 +8,8 @@ The current build inputs are:
 
 | Component | Pin |
 |---|---|
-| ROCm wheels | `7.14.0` |
-| PyTorch | `2.11.0+rocm7.14.0` |
+| ROCm wheels | `10.0.0` |
+| PyTorch | `2.11.0+rocm10.0.0` |
 | AITER | `v0.1.19` |
 | vLLM stable fallback | `v0.27.1` / `6e448d0ea9bf3d88d898b65449ca6dc2aec170ac` |
 | vLLM validated development baseline | `v0.27.2rc1.dev16` / `79f3183f86b89c3bda05d467041bf3ef9ef60426` |
