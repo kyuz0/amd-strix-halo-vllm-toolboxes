@@ -2,6 +2,27 @@
 
 An **Ubuntu 24.04-based**, Docker/Podman container that is **Toolbx-compatible** for serving LLMs with **vLLM** on **AMD Ryzen AI Max “Strix Halo” (gfx1151)**. The current image tracks the **stable ROCm 10.0 release** and the **latest stable vLLM release** at build time.
 
+> [!IMPORTANT]
+> This repository is part of the **[Strix Halo AI Toolboxes](https://strix-halo-toolboxes.com/)** project. Follow the central guide for the recommended host setup, including unified-memory allocation and OS-specific configuration.
+
+## Recommended setup: AI Toolbox Cockpit
+
+[AI Toolbox Cockpit](https://github.com/kyuz0/ai-toolbox-cockpit) is the preferred way to install, launch, and update this container. It provides tested, pre-configured profiles; supports Toolbx and Distrobox; and can run vLLM directly with Podman or Docker, so Toolbx is not required.
+
+```bash
+pipx install git+https://github.com/kyuz0/ai-toolbox-cockpit.git
+ai-toolbox-cockpit
+```
+
+The repository's [`refresh_toolbox.sh`](refresh_toolbox.sh) remains available for manual Toolbx refreshes. The Cockpit is recommended for normal installation and updates.
+
+## Available image channels
+
+| Image | Purpose |
+| :--- | :--- |
+| `docker.io/kyuz0/vllm-therock-gfx1151:latest` | Last verified working build; recommended for most users. |
+| `docker.io/kyuz0/vllm-therock-gfx1151:dev` | Newest development build; may contain upstream regressions. |
+
 ---
 
 ## 🚀 Current Image Status
@@ -19,10 +40,6 @@ The Ubuntu image has been tested for:
 
 ---
 
-### 📦 Project Context
-
-This repository is part of the **[Strix Halo AI Toolboxes](https://strix-halo-toolboxes.com)** project. Check out the website for an overview of all toolboxes, tutorials, and host configuration guides.
-
 ### ❤️ Support
 
 This is a hobby project maintained in my spare time. If you find these toolboxes and tutorials useful, you can **[buy me a coffee](https://buymeacoffee.com/dcapitella)** to support the work! ☕
@@ -37,13 +54,14 @@ This is a hobby project maintained in my spare time. If you find these toolboxes
 ## Table of Contents
 
 * [Tested Models and Historical Benchmarks](#tested-models-and-historical-benchmarks)
-* [1) Toolbx vs Docker/Podman](#1-toolbx-vs-dockerpodman)
-* [2) Quickstart — Toolbx (Ubuntu image)](#2-quickstart--toolbx-ubuntu-image)
-* [3) Quickstart — Distrobox](#3-quickstart--distrobox)
+* [1) Container options](#1-container-options)
+* [2) Manual Toolbx setup](#2-manual-toolbx-setup)
+* [3) Manual Distrobox setup](#3-manual-distrobox-setup)
 * [4) Testing the API](#4-testing-the-api)
 * [5) Use a Web UI for Chatting](#5-use-a-web-ui-for-chatting)
-* [6) Host Configuration](#6-host-configuration)
-* [7) Distributed Clustering (RDMA/RoCE)](#7-distributed-clustering-rdmaroce)
+* [6) Distributed Clustering (RDMA/RoCE)](#6-distributed-clustering-rdmaroce)
+* [7) AITER on Strix Halo Support Status](#7-aiter-on-strix-halo-support-status)
+* [8) DeepSeek V4 DSpark and automatic warmup](#8-deepseek-v4-dspark-and-automatic-warmup)
 
 
 ## Tested Models and Historical Benchmarks
@@ -70,16 +88,9 @@ View full benchmarks at: [https://kyuz0.github.io/amd-strix-halo-vllm-toolboxes/
 
 ---
 
-## 1) Toolbx vs Docker/Podman
+## 1) Container options
 
-The canonical `kyuz0/vllm-therock-gfx1151` image is Ubuntu-based and is available in two channels:
-
-| Tag | Description |
-| :--- | :--- |
-| **`:latest`** | Last verified working build. **Recommended for most users.** |
-| **`:dev`**    | Absolute latest build. May contain upstream regressions. |
-
-The image can be used both as:
+AI Toolbox Cockpit handles the recommended setup for each of these modes. The image can also be managed manually as:
 
 * **Toolbx (recommended for development):** Toolbx shares your **HOME** and user, so models/configs live on the host. The image is Ubuntu-based even when it is created from a Fedora host.
 * **Docker/Podman (recommended for deployment/perf):** Use for running vLLM as a service (host networking, IPC tuning, etc.). Always **mount a host directory** for model weights so they stay outside the container.
@@ -87,11 +98,11 @@ The image can be used both as:
 
 ---
 
-## 2) Quickstart — Toolbx (Ubuntu image)
+## 2) Manual Toolbx setup
 
-The canonical image is Ubuntu 24.04-based but remains Toolbx-compatible. On Fedora hosts, use the included `refresh_toolbox.sh` script:
+Use this section only if you prefer to manage a Toolbx container yourself. The canonical image is Ubuntu 24.04-based but remains Toolbx-compatible.
 
-It pulls the image and creates the toolbox with the correct parameters:
+The included script pulls the image and creates the container with the required parameters:
 
 ```bash
 # Interactive — prompts you to choose latest (default) or dev
@@ -119,9 +130,7 @@ toolbox create vllm-therock-gfx1151 \
 ```
 
 > [!IMPORTANT]
-> Use `--group-add keep-groups`, **not** `--group-add video --group-add render`. See
-> [GPU device permissions](#61-gpu-device-permissions) — the named groups do not grant GPU
-> access under rootless podman and can stop the container from starting at all.
+> Use `--group-add keep-groups`, **not** `--group-add video --group-add render`, with rootless Podman. See the [central Strix Halo setup guide](https://strix-halo-toolboxes.com/) for host permissions and preparation.
 
 Enter it:
 
@@ -145,7 +154,7 @@ start-vllm
 
 ---
 
-## 3) Quickstart — Distrobox
+## 3) Manual Distrobox setup
 
 If you are using Distrobox instead of Toolbx:
 
@@ -157,9 +166,7 @@ distrobox create -n vllm-therock-gfx1151 \
 distrobox enter vllm-therock-gfx1151
 ```
 
-> **Verification:** Run `rocm-smi` to check GPU status. It should print your GPU name (e.g.
-> `Radeon 8060S Graphics`). If it reports `get_name, Failed to load a library` or no device at
-> all, see [GPU device permissions](#61-gpu-device-permissions).
+> **Verification:** Run `rocm-smi` to check GPU status. It should print your GPU name (for example, `Radeon 8060S Graphics`). If it reports `get_name, Failed to load a library` or no device, check the [central Strix Halo setup guide](https://strix-halo-toolboxes.com/).
 
 ### Serving a Model (Easiest Way)
 
@@ -215,105 +222,7 @@ docker run -p 3000:3000 \
   ghcr.io/huggingface/chat-ui-db
 ```
 
-## 6) Host Configuration
-
-This should work on any Strix Halo. For a complete list of available hardware, see: [Strix Halo Hardware Database](https://strixhalo-homelab.d7.wtf/Hardware)
-
-### 6.1 GPU Device Permissions
-
-The container needs access to `/dev/kfd` (the ROCm compute device) and `/dev/dri/renderD*`. On
-most distributions these ship as mode **0660 `root:render`**, so access is granted by group
-membership. Add yourself to the groups once (log out and back in afterwards):
-
-```bash
-sudo usermod -aG render,video "$USER"
-```
-
-**Then pass those groups into the container with `--group-add keep-groups`.**
-
-> [!WARNING]
-> Do **not** use `--group-add video --group-add render`. Under **rootless podman** — the default
-> for both toolbx and distrobox — a *named* `--group-add` is resolved against the **container's**
-> `/etc/group`, and the resulting gid lives inside the user namespace. It never maps to the
-> host's `render`/`video` gid, so it grants **no** access to `/dev/kfd`. Two failure modes follow:
->
-> * **Container refuses to start**, if the image has no such group:
->   `Error: ... unable to find group render: no matching entries in group file`
-> * **Container starts but has no GPU**: `/dev/kfd` returns `EACCES` and `rocm-smi` reports
->   `get_name, Failed to load a library` with no device name.
->
-> `keep-groups` (crun's `keep_original_groups`) passes your **real host** supplementary groups
-> through, which is what actually authorises the device.
-
-**Rootful Docker** has no user namespace, so numeric **host** gids work there instead:
-
-```bash
-docker run --device /dev/kfd --device /dev/dri \
-  --group-add "$(getent group render | cut -d: -f3)" \
-  --group-add "$(getent group video  | cut -d: -f3)" ...
-```
-
-**Headless / multi-user hosts** may prefer relaxing the device modes instead of managing groups:
-
-```bash
-# /etc/udev/rules.d/70-kfd.rules
-SUBSYSTEM=="kfd", KERNEL=="kfd", MODE="0666"
-SUBSYSTEM=="drm", KERNEL=="renderD*", MODE="0666"
-```
-
-Reload with `sudo udevadm control --reload && sudo udevadm trigger`. This makes the devices
-world-accessible, which removes the group requirement entirely — convenient on a single-user
-box, but it does grant every local user GPU access.
-
-**Quick diagnosis** from inside the container:
-
-```bash
-id                                  # do you actually have the host render/video gids?
-ls -l /dev/kfd /dev/dri/renderD128  # 0660 needs group access; 0666 needs nothing
-rocm-smi --showproductname          # should print your GPU name
-```
-
-### 6.2 Test Configuration
-
-| Component         | Specification                                               |
-| :---------------- | :---------------------------------------------------------- |
-| **Test Machine**  | Framework Desktop                                           |
-| **CPU**           | Ryzen AI MAX+ 395 "Strix Halo"                              |
-| **System Memory** | 128 GB RAM                                                  |
-| **GPU Memory**    | 512 MB allocated in BIOS                                    |
-| **Host OS**       | Fedora 43, Linux 6.18.5-200.fc43.x86_64            |
-| **Container**     | Ubuntu 24.04                                             |
-| **ROCm**          | Stable ROCm 10.0                                        |
-| **vLLM**          | Latest stable release at image build time               |
-| **RCCL validation** | TP=2 tested over Ethernet and RDMA/RoCE                |
-
-### 6.3 Kernel Parameters (tested on Fedora 42)
-
-Add these boot parameters to enable unified memory while reserving a minimum of 4 GiB for the OS (max 124 GiB for iGPU):
-
-> [!WARNING]
-> Based on [benchmarking by Lars Urban (@urbanswelt)](https://github.com/urbanswelt), there is definitive indication that setting `amd_iommu=off` performs better than the previously recommended `iommu=pt`. Key result: `amd_iommu=off` is 5-12% faster than either IOMMU-enabled mode. See [Issue #66](https://github.com/kyuz0/amd-strix-halo-toolboxes/issues/66#issuecomment-4460612951) for details.
-
-`amd_iommu=off amdgpu.gttsize=126976 ttm.pages_limit=32505856`
-
-| Parameter                   | Purpose                                                                                    |
-|-----------------------------|--------------------------------------------------------------------------------------------|
-| `amd_iommu=off`             | Disables the AMD IOMMU. This improves performance over `iommu=pt`, reducing overhead for both the RDMA NIC and the iGPU unified memory access. |
-| `amdgpu.gttsize=126976`     | Caps GPU unified memory to 124 GiB; 126976 MiB ÷ 1024 = 124 GiB                            |
-| `ttm.pages_limit=32505856`  | Caps pinned memory to 124 GiB; 32505856 × 4 KiB = 126976 MiB = 124 GiB                     |
-
-Source: https://www.reddit.com/r/LocalLLaMA/comments/1m9wcdc/comment/n5gf53d/?context=3&utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button
-
-
-**Apply the changes:**
-
-```
-# Edit /etc/default/grub to add parameters to GRUB_CMDLINE_LINUX
-sudo grub2-mkconfig -o /boot/grub2/grub.cfg
-sudo reboot
-```
-
-## 7) Distributed Clustering (RDMA/RoCE)
+## 6) Distributed Clustering (RDMA/RoCE)
 
 This toolbox supports clustering multiple Strix Halo nodes using Ethernet or RDMA/RoCE (for example, with an Intel E810). This enables **Tensor Parallelism** across machines.
 
@@ -321,10 +230,10 @@ This toolbox supports clustering multiple Strix Halo nodes using Ethernet or RDM
 
 **Key Features:**
 *   **RCCL validation:** TP=2 has been tested over both Ethernet and RDMA/RoCE.
-*   **Easy Setup:** `refresh_toolbox.sh` automatically detects and exposes RDMA devices.
+*   **Manual setup:** `refresh_toolbox.sh` automatically detects and exposes RDMA devices when you are not using AI Toolbox Cockpit.
 *   **Cluster Management:** Included `start-vllm-cluster` TUI for managing Ray and vLLM.
 
-## 8) AITER on Strix Halo Support Status
+## 7) AITER on Strix Halo Support Status
 
 This toolbox uses only the AITER paths verified on Strix Halo (gfx1151). The image and Ray daemons do not set model-specific AITER policy. At serve time, the launcher explicitly keeps the broad `VLLM_ROCM_USE_AITER` toggle disabled for normal model profiles because it also enables unsupported operators such as the AITER sampler; DeepSeek V4 enables only its validated policy.
 
@@ -358,7 +267,7 @@ adapted from `AlexKGwyn/ds4-vllm-public`; it must pass exact selection and
 long-context recall checks whenever vLLM, Triton, or the sparse-indexer layout
 changes.
 
-## 9) DeepSeek V4 DSpark and automatic warmup
+## 8) DeepSeek V4 DSpark and automatic warmup
 
 `deepseek-ai/DeepSeek-V4-Flash-0731` now defaults to vLLM's native AMD DSpark
 five-token block speculative path. DSpark reuses the DFlash block-parallel
