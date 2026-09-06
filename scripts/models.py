@@ -162,6 +162,10 @@ MODEL_TABLE = {
             # Avoid throttling chunked prefill to 256-token scheduler steps.
             # Start conservatively for TP=2; larger values need RCCL profiling.
             "--max-num-batched-tokens", "512",
+            # open-webui sends tool_choice="auto" by default; the deepseek_v4
+            # parser matches this model's structural-tag tool format.
+            "--enable-auto-tool-choice",
+            "--tool-call-parser", "deepseek_v4",
         ]
     },
 
