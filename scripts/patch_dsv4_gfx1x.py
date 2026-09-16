@@ -139,25 +139,10 @@ def patch_sparse_indexer_topk(path: Path) -> bool:
     )
     source = _replace_once(
         source,
-        "            num_rows = logits.shape[0]\n\n"
-        "            torch.ops._C.top_k_per_row_prefill(\n"
-        "                logits,\n"
-        "                chunk.cu_seqlen_ks,\n"
-        "                chunk.cu_seqlen_ke,\n"
-        "                topk_indices,\n"
-        "                num_rows,\n"
-        "                logits.stride(0),\n"
-        "                logits.stride(1),\n"
-        "                topk_tokens,\n"
-        "            )\n",
-        "            if not _gfx1x_radix_topk(\n"
-        "                logits,\n"
-        "                topk_tokens,\n"
-        "                row_starts=chunk.cu_seqlen_ks,\n"
-        "                row_ends=chunk.cu_seqlen_ke,\n"
-        "                out=topk_indices,\n"
-        "            ):\n"
-        "                num_rows = logits.shape[0]\n"
+        # vLLM 0.29 moved the native call into the else-branch of a new gfx950-only
+        # AITER dispatch, one indent deeper. num_rows is now computed above that
+        # dispatch (it is an argument to it), so it must stay where it is.
+        "            else:\n"
         "                torch.ops._C.top_k_per_row_prefill(\n"
         "                    logits,\n"
         "                    chunk.cu_seqlen_ks,\n"
@@ -168,25 +153,31 @@ def patch_sparse_indexer_topk(path: Path) -> bool:
         "                    logits.stride(1),\n"
         "                    topk_tokens,\n"
         "                )\n",
+        "            else:\n"
+        "                if not _gfx1x_radix_topk(\n"
+        "                    logits,\n"
+        "                    topk_tokens,\n"
+        "                    row_starts=chunk.cu_seqlen_ks,\n"
+        "                    row_ends=chunk.cu_seqlen_ke,\n"
+        "                    out=topk_indices,\n"
+        "                ):\n"
+        "                    torch.ops._C.top_k_per_row_prefill(\n"
+        "                        logits,\n"
+        "                        chunk.cu_seqlen_ks,\n"
+        "                        chunk.cu_seqlen_ke,\n"
+        "                        topk_indices,\n"
+        "                        num_rows,\n"
+        "                        logits.stride(0),\n"
+        "                        logits.stride(1),\n"
+        "                        topk_tokens,\n"
+        "                    )\n",
         "prefill radix top-k dispatch",
     )
     source = _replace_once(
         source,
-        "        num_rows = logits.shape[0]\n\n"
-        "        torch.ops._C.top_k_per_row_decode(\n"
-        "            logits,\n"
-        "            next_n,\n"
-        "            decode_metadata.seq_lens,\n"
-        "            topk_indices,\n"
-        "            num_rows,\n"
-        "            logits.stride(0),\n"
-        "            logits.stride(1),\n"
-        "            topk_tokens,\n"
-        "        )\n",
-        "        if not _gfx1x_radix_topk(\n"
-        "            logits, topk_tokens, out=topk_indices\n"
-        "        ):\n"
-        "            num_rows = logits.shape[0]\n"
+        # same 0.29 restructure as the prefill site: native call now in the
+        # else-branch of the gfx950-only AITER dispatch
+        "        else:\n"
         "            torch.ops._C.top_k_per_row_decode(\n"
         "                logits,\n"
         "                next_n,\n"
@@ -197,6 +188,20 @@ def patch_sparse_indexer_topk(path: Path) -> bool:
         "                logits.stride(1),\n"
         "                topk_tokens,\n"
         "            )\n",
+        "        else:\n"
+        "            if not _gfx1x_radix_topk(\n"
+        "                logits, topk_tokens, out=topk_indices\n"
+        "            ):\n"
+        "                torch.ops._C.top_k_per_row_decode(\n"
+        "                    logits,\n"
+        "                    next_n,\n"
+        "                    decode_metadata.seq_lens,\n"
+        "                    topk_indices,\n"
+        "                    num_rows,\n"
+        "                    logits.stride(0),\n"
+        "                    logits.stride(1),\n"
+        "                    topk_tokens,\n"
+        "                )\n",
         "decode radix top-k dispatch",
     )
     path.write_text(source)

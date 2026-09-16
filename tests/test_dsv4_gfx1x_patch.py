@@ -82,16 +82,31 @@ def run_prefill(logits, chunk, topk_indices, topk_tokens):
         if True:
             num_rows = logits.shape[0]
 
-            torch.ops._C.top_k_per_row_prefill(
-                logits,
-                chunk.cu_seqlen_ks,
-                chunk.cu_seqlen_ke,
-                topk_indices,
-                num_rows,
-                logits.stride(0),
-                logits.stride(1),
-                topk_tokens,
+            aiter_topk_kernel = _get_aiter_top_k_kernel(
+                is_prefill=True,
+                compress_ratio=compress_ratio,
+                num_rows=num_rows,
             )
+            if aiter_topk_kernel is not None:
+                _launch_aiter_top_k_per_row_prefill(
+                    aiter_topk_kernel,
+                    logits,
+                    chunk.cu_seqlen_ks,
+                    chunk.cu_seqlen_ke,
+                    topk_indices,
+                    topk_tokens,
+                )
+            else:
+                torch.ops._C.top_k_per_row_prefill(
+                    logits,
+                    chunk.cu_seqlen_ks,
+                    chunk.cu_seqlen_ke,
+                    topk_indices,
+                    num_rows,
+                    logits.stride(0),
+                    logits.stride(1),
+                    topk_tokens,
+                )
 
 
 def run_decode(
@@ -100,16 +115,31 @@ def run_decode(
     if True:
         num_rows = logits.shape[0]
 
-        torch.ops._C.top_k_per_row_decode(
-            logits,
-            next_n,
-            decode_metadata.seq_lens,
-            topk_indices,
-            num_rows,
-            logits.stride(0),
-            logits.stride(1),
-            topk_tokens,
+        aiter_topk_kernel = _get_aiter_top_k_kernel(
+            is_prefill=False,
+            compress_ratio=compress_ratio,
+            num_rows=num_rows,
+            max_valid_seq_len=max_compressed_seq_len,
         )
+        if aiter_topk_kernel is not None:
+            _launch_aiter_top_k_per_row_decode(
+                aiter_topk_kernel,
+                logits,
+                decode_metadata.seq_lens,
+                topk_indices,
+                topk_tokens,
+            )
+        else:
+            torch.ops._C.top_k_per_row_decode(
+                logits,
+                next_n,
+                decode_metadata.seq_lens,
+                topk_indices,
+                num_rows,
+                logits.stride(0),
+                logits.stride(1),
+                topk_tokens,
+            )
 '''
 
 
