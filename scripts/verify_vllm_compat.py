@@ -42,7 +42,10 @@ REQUIRED_NATIVE_INTERFACES = {
     ),
     "vllm/v1/worker/gpu/spec_decode/dspark/utils.py": (
         "def load_dspark_model(",
-        'raise NotImplementedError("DSpark does not support pipeline parallelism.")',
+        # vLLM 0.30 gave DSpark pipeline parallelism: the refusal this used to
+        # anchor on became _get_dspark_parallel_config(), which loads the draft
+        # with pipeline_parallel_size=1 while the target keeps its own.
+        "def _get_dspark_parallel_config(",
         'draft_model, "has_own_lm_head"',
     ),
     "vllm/v1/worker/gpu/spec_decode/eagle/eagle3_utils.py": (
