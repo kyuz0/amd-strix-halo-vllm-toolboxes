@@ -65,7 +65,7 @@ RUN python -m pip install --upgrade pip wheel packaging "setuptools<80.0.0" "set
 ARG ROCM_WHL=https://stable.repo.amd.com/rocm/whl-next/
 ARG TORCH_VERSION=2.11.0
 ARG ROCM_VERSION=10.0.0
-ARG AITER_REF=v0.1.19
+ARG AITER_REF=v0.1.23
 RUN set -e; \
     TV_MINOR=$(( $(echo "${TORCH_VERSION}" | cut -d. -f2) + 15 )); \
     TORCHVISION="0.${TV_MINOR}.0+rocm${ROCM_VERSION}"; \
@@ -86,6 +86,16 @@ RUN python /opt/patch_amdsmi.py
 
 # --- VISION: ROCm flash-attention + aiter + composable_kernel (Triton ViT kernels) ---
 # Built against the pip rocm-sdk for gfx1151 so the ViT uses Flash Attention, not SDPA.
+# AITER declares a hard `flydsl==X` requirement and we install its wheel with --no-deps (to keep
+# pip away from the torch stack), so flydsl must be installed explicitly. On v0.1.19 the gap was
+# harmless -- nothing we imported reached it, and pip only warned. v0.1.23 moved `topk_select` into
+# aiter/__init__.py at module level, which imports aiter.ops.flydsl, so the MISSING DEP NOW BREAKS
+# THE WHOLE aiter IMPORT: flash_attn_interface's aiter import fails, patch_strix's resilience
+# net sets flash_attn_gpu = None, and vLLM dies later with
+#   AttributeError: 'NoneType' object has no attribute 'varlen_fwd'
+# -- a green build that cannot serve. The version is read from aiter's own metadata rather than
+# pinned here, so an AITER bump carries its matching flydsl automatically (0.1.19 -> 0.2.4,
+# 0.1.23 -> 0.3.4.1). flydsl declares no dependencies of its own.
 COPY scripts/patch_aiter_headers.py /opt/patch_aiter_headers.py
 RUN set -e; ROOT=$(rocm-sdk path --root); \
     export ROCM_PATH=$ROOT HIP_PATH=$ROOT \
@@ -105,6 +115,12 @@ RUN set -e; ROOT=$(rocm-sdk path --root); \
     export CK_DIR="$(pwd)/3rdparty/composable_kernel" && \
     python -m pip wheel --no-build-isolation --no-deps -w /tmp/aiter_dist -v . && \
     python -m pip install --force-reinstall --no-deps /tmp/aiter_dist/amd_aiter*.whl && \
+    FLYDSL=$(python -c "import importlib.metadata as m; rs=m.distribution('amd-aiter').requires or []; print(next((r.split(';')[0].strip() for r in rs if r.lower().startswith('flydsl')), ''))") && \
+    if [ -n "$FLYDSL" ]; then \
+      echo "[aiter] installing its own flydsl requirement: $FLYDSL"; \
+      python -m pip install --no-deps "$FLYDSL" && \
+      python -c "import importlib.metadata as m; print('flydsl', m.version('flydsl'), 'installed OK')"; \
+    else echo "[aiter] no flydsl requirement declared; nothing to install"; fi && \
     python /opt/patch_aiter_headers.py && \
     cd /opt/flash-attention && \
     python -c "import re; f=open('setup.py'); t=f.read(); f.close(); t=re.sub(r'subprocess\.run\([\s\S]*?third_party/aiter[\s\S]*?check=True,\s*\)', 'pass # patched', t); open('setup.py','w').write(t)" && \
@@ -188,7 +204,7 @@ RUN ROOT=$(rocm-sdk path --root) && \
 RUN python -m pip install ray
 
 
-# AITER v0.1.19 detects the native GPU while importing and therefore cannot be imported on
+# AITER (seen on v0.1.19) detects the native GPU while importing and therefore cannot be imported on
 # GitHub's GPU-less image builder. Verify the package is installed without executing it;
 # model-specific modules, including DeepSeek-V4 MHC, JIT-compile on the target gfx1151 host.
 RUN python -c "import importlib.util; assert importlib.util.find_spec('aiter'); print('aiter package installed OK')"

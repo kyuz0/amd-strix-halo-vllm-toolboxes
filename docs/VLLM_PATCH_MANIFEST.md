@@ -10,7 +10,7 @@ The current build inputs are:
 |---|---|
 | ROCm wheels | `10.0.0` |
 | PyTorch | `2.11.0+rocm10.0.0` |
-| AITER | `v0.1.19` |
+| AITER | `v0.1.23` (the tag vLLM 0.31 pins in `docker/Dockerfile.rocm_base`) |
 | vLLM stable fallback | `v0.27.1` / `6e448d0ea9bf3d88d898b65449ca6dc2aec170ac` |
 | vLLM validated development baseline | `v0.27.2rc1.dev16` / `79f3183f86b89c3bda05d467041bf3ef9ef60426` |
 | conch-triton-kernels | `1.2.1` (from vLLM `requirements/rocm.txt`) |
@@ -84,6 +84,13 @@ the packaged `scripts/gfx1x_tilelang_mqa.py` and
 | new `vllm/v1/attention/ops/gfx1x_tilelang_mqa.py` | TileLang BF16 sparse-indexer GEMM, paged-cache de-shuffle, bounded KV buckets, and speculative-row causal bounds. Adapted from AlexKGwyn/ds4-vllm-public. | Compare with the current upstream sparse indexer and the source project's latest `ds4_tl_indexer.py`. Revalidate page layout, query shape, FP8 scale interpretation, context bucketing, and `next_n`. |
 | new `vllm/v1/attention/ops/gfx1x_radix_topk.py` | Deterministic radix threshold selection plus ordered integer compaction. It emits local prefill indices or global decode indices already ascending, with `-1` padding, without atomics or full-row sort scratch. Adapted from AlexKGwyn/ds4-vllm-public commit `95c45bb94f324fcf3f58ec1f5eaf2d1aaceb87ff`. | Compare against the stable reference for both histogram modes and every served top-k. Recheck Triton histogram lowering, float-to-key ordering, tie behavior, row bounds, output strides, `-inf` handling, and maximum context. Remove if upstream gains deterministic performant ROCm selection. |
 | new `vllm/model_executor/kernels/linear/scaled_mm/gfx1x_w8a8_bf16.py` | Caches each block-dequantized BF16 weight, sends small-M decode through `rocm_unquantized_gemm_impl`/gfx1x skinny GEMM, and optionally reuses warm weights for prefill. Adapted from AlexKGwyn/ds4-vllm-public. | Revalidate scale orientation and dtype, weight layout, skinny-GEMM dispatch, cache lifetime, temporary FP32 peak, BF16 cache size, output quality, and cold/warm behavior. Never infer end-to-end speed from the source project's per-kernel claim. |
+
+**AITER's `flydsl` dependency.** The aiter wheel is installed with `--no-deps` to keep pip away from
+the torch stack, so AITER's hard `flydsl==X` requirement is installed explicitly, with the version read
+from aiter's own metadata (v0.1.19 -> 0.2.4, v0.1.23 -> 0.3.4.1). Before v0.1.23 the gap only produced a
+pip warning; v0.1.23 imports `topk_select` -> `aiter.ops.flydsl` from `aiter/__init__.py`, so a missing
+flydsl breaks the entire aiter import. `flash_attn_interface`'s soft aiter import then yields
+`flash_attn_gpu = None` and vLLM fails at `varlen_fwd` on a build that passed every CI check.
 
 Build markers:
 
