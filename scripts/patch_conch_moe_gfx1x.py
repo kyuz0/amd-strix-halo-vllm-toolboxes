@@ -17,8 +17,13 @@ from pathlib import Path
 
 
 MARKER = "# PATCHED: opt-in gfx1x MXFP4 MoE tuning"
-OPT_FLAGS_TARGET = Path(
-    "third_party/triton_kernels/matmul_ogs_details/opt_flags.py"
+# vLLM vendors triton_kernels from triton-lang/triton via
+# cmake/external_projects/triton_kernels.cmake. The 0.31 pin moved from
+# release/internal/3.6.x to 3.8.x, which renamed matmul_ogs_details ->
+# matmul_details (and matmul_ogs.py -> matmul.py). Try the layouts newest first.
+OPT_FLAGS_TARGETS = (
+    Path("third_party/triton_kernels/matmul_details/opt_flags.py"),
+    Path("third_party/triton_kernels/matmul_ogs_details/opt_flags.py"),
 )
 
 
@@ -45,8 +50,8 @@ def patch_opt_flags(path: Path) -> bool:
     )
     source = _replace_once(
         source,
-        "from triton_kernels.tensor import bitwidth\n\n\n@dataclass\n",
-        "from triton_kernels.tensor import bitwidth\n\n\n"
+        "@dataclass\nclass OptFlags:\n",
+        ""
         f"{MARKER}\n"
         "_GFX1X_MOE_CONFIG = None\n\n\n"
         "def _gfx1x_moe_config():\n"
@@ -70,7 +75,7 @@ def patch_opt_flags(path: Path) -> bool:
         "                flush=True,\n"
         "            )\n"
         "    return _GFX1X_MOE_CONFIG\n\n\n"
-        "@dataclass\n",
+        "@dataclass\nclass OptFlags:\n",
         "gfx1x configuration helper",
     )
     source = _replace_once(
@@ -115,7 +120,12 @@ def installed_target() -> Path:
     if spec is None or not spec.submodule_search_locations:
         raise RuntimeError("cannot locate the installed vllm package")
     package_root = Path(next(iter(spec.submodule_search_locations))).resolve()
-    return package_root / OPT_FLAGS_TARGET
+    for relative in OPT_FLAGS_TARGETS:
+        candidate = package_root / relative
+        if candidate.exists():
+            return candidate
+    # Return the newest spelling so the caller's error names the expected path.
+    return package_root / OPT_FLAGS_TARGETS[0]
 
 
 def main() -> None:

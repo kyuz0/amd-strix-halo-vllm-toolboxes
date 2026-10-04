@@ -21,7 +21,7 @@ LOCAL_PATCH_PATHS = (
     "vllm/v1/attention/ops/gfx1x_tilelang_mqa.py",
     "vllm/v1/attention/ops/gfx1x_radix_topk.py",
     "vllm/model_executor/layers/quantization/utils/fp8_utils.py",
-    "vllm/third_party/triton_kernels/matmul_ogs_details/opt_flags.py",
+    "vllm/third_party/triton_kernels/matmul_details/opt_flags.py",
     "vllm/v1/executor/ray_executor_v2.py",
     "vllm/model_executor/layers/fused_moe/oracle/unquantized.py",
     "vllm/platforms/rocm.py",

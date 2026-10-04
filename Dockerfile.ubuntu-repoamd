@@ -177,10 +177,9 @@ RUN ROOT=$(rocm-sdk path --root) && \
     python -m pip install -c /tmp/rocm-stack.constraints -r requirements/rocm.txt && \
     python -m pip install --no-deps /tmp/dist/*.whl && \
     python /opt/patch_conch_moe_gfx1x.py && \
-    python -m py_compile \
-      /opt/venv/lib/python3.12/site-packages/vllm/third_party/triton_kernels/matmul_ogs_details/opt_flags.py && \
-    grep -q "PATCHED: opt-in gfx1x MXFP4 MoE tuning" \
-      /opt/venv/lib/python3.12/site-packages/vllm/third_party/triton_kernels/matmul_ogs_details/opt_flags.py && \
+    OPT_FLAGS=$(cd /opt && python -c "import patch_conch_moe_gfx1x as p; print(p.installed_target())") && \
+    python -m py_compile "$OPT_FLAGS" && \
+    grep -q "PATCHED: opt-in gfx1x MXFP4 MoE tuning" "$OPT_FLAGS" && \
     test "$(python -c 'import importlib.metadata as m; print(m.version("vllm"))')" = "$VLLM_BUILD_VERSION" && \
     test "$(python -c 'import torch; print(torch.__version__)')" = "$TORCH_BEFORE" && \
     test "$(python -c 'import triton; print(triton.__version__)')" = "$TRITON_BEFORE" && \
