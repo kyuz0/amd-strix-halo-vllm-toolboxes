@@ -112,7 +112,10 @@ ENV VLLM_TARGET_DEVICE="rocm"
 ENV PYTORCH_ROCM_ARCH="gfx1151"
 ENV HIP_ARCHITECTURES="gfx1151"          
 ENV AMDGPU_TARGETS="gfx1151"              
-ENV MAX_JOBS="4"
+# Parallel build jobs. Default tuned for the GitHub Actions runner (~7 GB RAM);
+# override with --build-arg MAX_JOBS=N when building locally on larger machines.
+ARG MAX_JOBS=4
+ENV MAX_JOBS=${MAX_JOBS}
 
 # --- CRITICAL FIX FOR SEGFAULT ---
 # We force the Host Compiler (CC/CXX) to be the ROCm Clang, not Fedora GCC.
