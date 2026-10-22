@@ -40,6 +40,12 @@ class LauncherFeatureTests(unittest.TestCase):
         index = flags.index("--max-num-batched-tokens")
         self.assertEqual(flags[index + 1], "512")
 
+    def test_deepseek_enables_auto_tool_choice_with_deepseek_v4_parser(self):
+        flags = self.config["extra_flags"]
+        self.assertIn("--enable-auto-tool-choice", flags)
+        index = flags.index("--tool-call-parser")
+        self.assertEqual(flags[index + 1], "deepseek_v4")
+
     def test_deepseek_does_not_use_logprobs_to_select_native_sampler(self):
         self.assertNotIn("--logprobs-mode", self.config["extra_flags"])
         patcher = (ROOT / "scripts" / "patch_strix.py").read_text()
