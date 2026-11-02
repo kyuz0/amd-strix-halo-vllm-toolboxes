@@ -89,8 +89,9 @@ def patch_sparse_indexer_topk(path: Path) -> bool:
 
     source = _replace_once(
         source,
-        "import functools\nimport importlib\nimport math\n",
-        "import functools\nimport importlib\nimport math\nimport os\n",
+        # anchor on math alone: vLLM 0.33 inserted `import inspect` before it
+        "\nimport math\n",
+        "\nimport math\nimport os\n",
         "radix top-k environment import",
     )
     source = _replace_once(
