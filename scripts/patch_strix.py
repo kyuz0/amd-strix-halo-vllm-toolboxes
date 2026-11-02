@@ -34,13 +34,48 @@ def _skip_aiter_sampler_on_gfx1x() -> bool:
     )
     new_call = "and not _skip_aiter_sampler_on_gfx1x()"
 
-    if source.count(old_helper) != 1 or source.count(old_call) != 1:
+    if source.count(old_helper) == 1 and source.count(old_call) == 1:
+        source = source.replace(old_helper, new_helper, 1)
+        source = source.replace(old_call, new_call, 1)
+        path.write_text(source)
+        return True
+
+    # vLLM >= 0.33 dropped the helper: gfx1250 now takes AITER's fused Gumbel
+    # path, chosen in __init__. Keep that, and send the rest of gfx1x native.
+    old_gate = """            logprobs_mode not in PROCESSED_LOGPROBS_MODES
+            and rocm_aiter_ops.is_enabled()
+        ):
+            # Lazy ROCm-only import; keeps arch detection out of import time
+            # on CUDA/CPU.
+            from vllm.platforms.rocm import on_gfx1250
+"""
+    new_gate = """            logprobs_mode not in PROCESSED_LOGPROBS_MODES
+            and rocm_aiter_ops.is_enabled()
+            and not _skip_aiter_sampler_on_gfx1x()
+        ):
+            # Lazy ROCm-only import; keeps arch detection out of import time
+            # on CUDA/CPU.
+            from vllm.platforms.rocm import on_gfx1250
+"""
+    anchor = "def _aiter_temp_gumbel_sample(\n"
+    gate_helper = f"""{GFX1X_AITER_SAMPLER_MARKER}
+def _skip_aiter_sampler_on_gfx1x() -> bool:
+    # AITER's output sampler is not validated on RDNA (gfx1250 has its own
+    # upstream path). DeepSeek still enables broad AITER for separate
+    # sparse-indexer helpers, so gate sampling here.
+    from vllm.platforms.rocm import on_gfx1250, on_gfx1x
+
+    return on_gfx1x() and not on_gfx1250()
+
+
+"""
+    if source.count(old_gate) != 1 or source.count(anchor) != 1:
         raise RuntimeError(
             "Unsupported vLLM AITER sampler gate layout; refusing to build "
             "without the gfx1x native-sampler fallback"
         )
-    source = source.replace(old_helper, new_helper, 1)
-    source = source.replace(old_call, new_call, 1)
+    source = source.replace(old_gate, new_gate, 1)
+    source = source.replace(anchor, gate_helper + anchor, 1)
     path.write_text(source)
     return True
 
