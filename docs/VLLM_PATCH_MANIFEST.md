@@ -10,7 +10,7 @@ The current build inputs are:
 |---|---|
 | ROCm wheels | `10.0.0` |
 | PyTorch | `2.11.0+rocm10.0.0` |
-| AITER | `v0.1.24.post1` (the tag vLLM 0.32 pins in `docker/Dockerfile.rocm_base`) |
+| AITER | `v0.1.26` (the tag vLLM 0.33 pins in `docker/Dockerfile.rocm_base`) |
 | vLLM stable fallback | `v0.27.1` / `6e448d0ea9bf3d88d898b65449ca6dc2aec170ac` |
 | vLLM validated development baseline | `v0.27.2rc1.dev16` / `79f3183f86b89c3bda05d467041bf3ef9ef60426` |
 | conch-triton-kernels | `1.2.1` (from vLLM `requirements/rocm.txt`) |
@@ -87,7 +87,7 @@ the packaged `scripts/gfx1x_tilelang_mqa.py` and
 
 **AITER's `flydsl` dependency.** The aiter wheel is installed with `--no-deps` to keep pip away from
 the torch stack, so AITER's hard `flydsl==X` requirement is installed explicitly, with the version read
-from aiter's own metadata (v0.1.19 -> 0.2.4, v0.1.23 and v0.1.24.post1 -> 0.3.4.1). Before v0.1.23 the gap only produced a
+from aiter's own metadata (v0.1.19 -> 0.2.4, v0.1.23 and v0.1.24.post1 -> 0.3.4.1, v0.1.26 -> 0.4.0). Before v0.1.23 the gap only produced a
 pip warning; v0.1.23 imports `topk_select` -> `aiter.ops.flydsl` from `aiter/__init__.py`, so a missing
 flydsl breaks the entire aiter import. `flash_attn_interface`'s soft aiter import then yields
 `flash_attn_gpu = None` and vLLM fails at `varlen_fwd` on a build that passed every CI check.

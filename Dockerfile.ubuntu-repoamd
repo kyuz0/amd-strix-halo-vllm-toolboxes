@@ -65,7 +65,7 @@ RUN python -m pip install --upgrade pip wheel packaging "setuptools<80.0.0" "set
 ARG ROCM_WHL=https://stable.repo.amd.com/rocm/whl-next/
 ARG TORCH_VERSION=2.11.0
 ARG ROCM_VERSION=10.0.0
-ARG AITER_REF=v0.1.24.post1
+ARG AITER_REF=v0.1.26
 RUN set -e; \
     TV_MINOR=$(( $(echo "${TORCH_VERSION}" | cut -d. -f2) + 15 )); \
     TORCHVISION="0.${TV_MINOR}.0+rocm${ROCM_VERSION}"; \
@@ -95,7 +95,7 @@ RUN python /opt/patch_amdsmi.py
 #   AttributeError: 'NoneType' object has no attribute 'varlen_fwd'
 # -- a green build that cannot serve. The version is read from aiter's own metadata rather than
 # pinned here, so an AITER bump carries its matching flydsl automatically (0.1.19 -> 0.2.4,
-# 0.1.23 -> 0.3.4.1). flydsl declares no dependencies of its own.
+# 0.1.23 -> 0.3.4.1, 0.1.26 -> 0.4.0). flydsl declares no dependencies of its own.
 COPY scripts/patch_aiter_headers.py /opt/patch_aiter_headers.py
 RUN set -e; ROOT=$(rocm-sdk path --root); \
     export ROCM_PATH=$ROOT HIP_PATH=$ROOT \
