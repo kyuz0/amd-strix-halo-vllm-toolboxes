@@ -69,6 +69,14 @@ def _skip_aiter_sampler_on_gfx1x() -> bool:
 
 
 """
+    # vLLM >= 0.34 removed Model Runner V1 and its AITER sampling branch; the
+    # V2 sampler is native. Nothing to gate, unless AITER shows up again.
+    v2_sampler = Path("vllm/v1/worker/gpu/sample")
+    if "aiter" not in source and v2_sampler.is_dir() and not any(
+        "aiter" in f.read_text() for f in v2_sampler.rglob("*.py")
+    ):
+        return None
+
     if source.count(old_gate) != 1 or source.count(anchor) != 1:
         raise RuntimeError(
             "Unsupported vLLM AITER sampler gate layout; refusing to build "
@@ -220,11 +228,13 @@ def patch_vllm():
             "Missing vLLM top-k/top-p sampler; refusing to build without the "
             "gfx1x AITER sampler gate"
         )
-    patch_gfx1x_aiter_sampler(p_sampler)
-    print(
-        " -> Patched vllm/v1/sample/ops/topk_topp_sampler.py "
-        "(AITER sampler disabled on gfx1x)"
-    )
+    if patch_gfx1x_aiter_sampler(p_sampler) is None:
+        print(" -> vLLM has no AITER sampler; no gfx1x sampler gate needed")
+    else:
+        print(
+            " -> Patched vllm/v1/sample/ops/topk_topp_sampler.py "
+            "(AITER sampler disabled on gfx1x)"
+        )
 
     # Patch 2.5: DeepSeek V4 has two private FP8 linear fast paths which check the
     # broad AITER toggle instead of the FP8-linear capability gate. That bypasses
