@@ -31,9 +31,13 @@ REQUIRED_NATIVE_INTERFACES = {
         "if (idx + 1) in self.aux_hidden_state_layers:",
         "aux_hidden_states.append(aux_recon.mean(dim=1))",
     ),
-    "vllm/v1/worker/gpu/spec_decode/__init__.py": (
-        'speculative_config.method == "dspark"',
-        "DSparkSpeculator",
+    # vLLM 0.34 picks the speculator from a per-method config registry instead
+    # of an if-chain in spec_decode/__init__.py.
+    "vllm/v1/worker/gpu/spec_decode/speculator_config.py": (
+        '"dspark": _builtin("dspark.config", "DSparkSpeculatorConfig")',
+    ),
+    "vllm/v1/worker/gpu/spec_decode/dspark/config.py": (
+        "vllm.v1.worker.gpu.spec_decode.dspark.speculator.DSparkSpeculator",
     ),
     "vllm/v1/worker/gpu/spec_decode/dspark/speculator.py": (
         "class DSparkSpeculator(DFlashSpeculator):",
@@ -46,7 +50,11 @@ REQUIRED_NATIVE_INTERFACES = {
         # anchor on became _get_dspark_parallel_config(), which loads the draft
         # with pipeline_parallel_size=1 while the target keeps its own.
         "def _get_dspark_parallel_config(",
-        'draft_model, "has_own_lm_head"',
+        # vLLM 0.34 moved the has_own_lm_head check into the shared helper.
+        "share_target_lm_head(",
+    ),
+    "vllm/v1/worker/gpu/spec_decode/eagle/utils.py": (
+        '_should_share(draft_model, "has_own_lm_head", draft_lm_head, target_lm_head)',
     ),
     "vllm/v1/worker/gpu/spec_decode/eagle/eagle3_utils.py": (
         'getattr(hf_config, "dspark_target_layer_ids", None)',

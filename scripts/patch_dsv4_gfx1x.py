@@ -30,20 +30,41 @@ def patch_sparse_indexer_mqa(path: Path) -> bool:
     if SPARSE_MARKER in source:
         return False
 
-    source = _replace_once(
-        source,
+    old_import = (
         "    from vllm.platforms.rocm import _ON_GFX942, _ON_GFX950\n"
         "else:\n"
         "    _ON_GFX942 = False\n"
-        "    _ON_GFX950 = False\n",
-        "    from vllm.platforms.rocm import _ON_GFX942, _ON_GFX950, on_gfx1x\n"
-        "else:\n"
-        "    _ON_GFX942 = False\n"
-        "    _ON_GFX950 = False\n\n"
-        "    def on_gfx1x() -> bool:\n"
-        "        return False\n",
-        "ROCm platform import",
+        "    _ON_GFX950 = False\n"
     )
+    if old_import in source:
+        source = _replace_once(
+            source,
+            old_import,
+            "    from vllm.platforms.rocm import _ON_GFX942, _ON_GFX950, on_gfx1x\n"
+            "else:\n"
+            "    _ON_GFX942 = False\n"
+            "    _ON_GFX950 = False\n\n"
+            "    def on_gfx1x() -> bool:\n"
+            "        return False\n",
+            "ROCm platform import",
+        )
+    else:
+        # vLLM 0.34 imports the RDNA flags as a parenthesised list and gives
+        # its non-ROCm branch a get_cdna_version() stub.
+        source = _replace_once(
+            source,
+            "        get_cdna_version,\n    )\nelse:\n",
+            "        get_cdna_version,\n        on_gfx1x,\n    )\nelse:\n",
+            "ROCm platform import",
+        )
+        source = _replace_once(
+            source,
+            "    def get_cdna_version() -> int:\n        return 0\n",
+            "    def get_cdna_version() -> int:\n        return 0\n\n"
+            "    def on_gfx1x() -> bool:\n"
+            "        return False\n",
+            "non-ROCm on_gfx1x stub",
+        )
     source = _replace_once(
         source,
         "    aiter_paged_mqa_logits_module = None\n",
